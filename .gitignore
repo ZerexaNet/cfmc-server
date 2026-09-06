@@ -1,0 +1,15 @@
+# 依赖
+node_modules/
+
+# Wrangler 本地开发产物 (本地 SQLite / KV 模拟数据 / .wrangler 缓存)
+.wrangler/
+.dev.vars
+
+# 构建产物
+dist/
+*.log
+
+# 编辑器
+.idea/
+.vscode/
+.DS_Store

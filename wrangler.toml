@@ -1,0 +1,118 @@
+# ============================================================
+# CFMC-Edge — Cloudflare 配置文件 (wrangler v4)
+#
+# 设计说明:
+# - 本文件与《cfmc.md 主提示词》中的模板保持一致, 包含全部绑定
+# - <YOUR_XXX_ID> 为占位符: 运行 `bash scripts/init-d1.sh` 后,
+#   脚本会输出真实的 D1 database_id, 手动替换即可 (远端部署必需)
+# - 本地开发 (wrangler dev) 不需要真实 ID: D1/KV/R2 均由
+#   miniflare 在本地模拟, 占位符不影响本地运行
+# ============================================================
+
+name = "cfmc-edge"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ============================================================
+# Durable Objects 类定义
+# ------------------------------------------------------------
+# 为什么用 DO 而不是普通 Worker:
+#   1. DO 提供单一写入点 (强一致), 天然适合"一个区域一个引擎"的模型
+#   2. DO 内置 Storage + Alarm, 可以实现 20TPS 游戏循环
+#   3. 实例数量无上限, 每个区域 (16x16区块) 一个 RegionDO, 水平无限扩展
+# ============================================================
+[[durable_objects.bindings]]
+name = "WORLD_MANAGER"
+class_name = "WorldManagerDO"
+
+[[durable_objects.bindings]]
+name = "REGION"
+class_name = "RegionDO"
+
+[[durable_objects.bindings]]
+name = "CHAT"
+class_name = "ChatDO"
+
+# DO 类必须声明迁移, 否则部署时报错 (本地 dev 可省略, 但保留以兼容远程部署)
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WorldManagerDO", "RegionDO", "ChatDO"]
+
+# ============================================================
+# D1 数据库绑定 (Serverless SQLite)
+# ------------------------------------------------------------
+# 为什么地图数据放 D1 而不是 DO 内置 Storage:
+#   - D1 支持 SQL 查询 (跨区域统计/反作弊审计/世界导出)
+#   - DO Storage 适合小体量 KV, 大体量区块数据用 D1 更经济
+# TODO(Phase 2): 如果 D1 单区块读写延迟不达标, 可降级为 DO 内置 SQLite
+# ============================================================
+[[d1_databases]]
+binding = "USERS_DB"
+database_name = "cfmc-users"
+database_id = "<YOUR_USERS_DB_ID>"      # init-d1.sh 运行后替换
+
+[[d1_databases]]
+binding = "WORLD_DB"
+database_name = "cfmc-world"
+database_id = "<YOUR_WORLD_DB_ID>"      # init-d1.sh 运行后替换
+
+# ============================================================
+# KV 命名空间 (最终一致, 读多写少场景)
+# 用途: 会话缓存 / 在线状态 / 皮肤纹理缓存 / Refresh Token
+# ============================================================
+[[kv_namespaces]]
+binding = "CACHE"
+id = "<YOUR_KV_NAMESPACE_ID>"           # wrangler kv namespace create CACHE 后替换
+
+# ============================================================
+# R2 存储桶 (S3 兼容对象存储)
+# 用途: 世界备份归档 / 大文件 (启动画面/资源包) 托管
+# ============================================================
+[[r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "cfmc-backups"
+
+# ============================================================
+# Queue (异步任务队列)
+# 用途: 削峰 —— 把非实时任务 (统计上报/Discord桥接/批量备份) 从
+#       Tick 循环剥离, 避免 DO CPU 超时
+# 注意: 若本地 wrangler dev 对 producer-only 配置报错, 可先注释此段
+# ============================================================
+[[queues]]
+queue = "EVENTS_QUEUE"
+max_batch_size = 100
+max_batch_timeout = 30
+
+# ============================================================
+# 环境变量 (与 [vars] 同名, RegionDO/Auth Worker 内通过 env.XXX 读取)
+# ============================================================
+[vars]
+ENVIRONMENT = "development"
+DEFAULT_AUTH_MODE = "hybrid"            # online / offline / skin_server / hybrid
+DEFAULT_SKIN_SERVER = "https://ely.by"  # 或 https://littleskin.cn 或自建地址
+MAX_PLAYERS_PER_REGION = "25"
+TICK_RATE_MS = "50"                     # 20 TPS
+PERSIST_INTERVAL_MS = "5000"            # 5秒持久化一次
+VIEW_DISTANCE = "6"                     # 区块视距
+COMPRESSION_THRESHOLD = "256"           # 超过此大小的包才压缩
+
+# ============================================================
+# Placement (智能路由)
+# smart 模式让 CF 把 DO 实例放置在离"主要访问者"最近的DC,
+# 对 Minecraft 这种单区域多人交互场景可降低跨玩家 RTT
+# ============================================================
+[placement]
+mode = "smart"
+
+# ============================================================
+# 本地开发配置
+# ============================================================
+[dev]
+local_port = 8787
+
+# ------------------------------------------------------------
+# 环境差异配置 (部署生产环境: wrangler deploy --env production)
+# ------------------------------------------------------------
+[env.production.vars]
+ENVIRONMENT = "production"
