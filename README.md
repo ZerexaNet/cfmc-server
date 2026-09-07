@@ -8,6 +8,8 @@
 
 配套客户端 Mod: [cfmc-client](https://github.com/ZerexaNet/cfmc-client) (Fabric/NeoForge)
 
+> **部署指南**: [DEPLOYMENT.md](DEPLOYMENT.md) —— 从零到上线的完整手册（资源初始化、Secrets、运维、故障排查）
+
 ---
 
 ## 项目简介
@@ -115,6 +117,8 @@ ws.onopen = () => ws.send(JSON.stringify({ type: "chat", msg: "hello" }));
 wrangler login
 npm run deploy
 ```
+
+> 上线完整流程（KV/R2/Queue 初始化、Secrets 配置、域名绑定、运维与回滚）见 **[DEPLOYMENT.md](DEPLOYMENT.md)**。
 
 ## 目录结构
 
