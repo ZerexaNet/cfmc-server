@@ -67,12 +67,17 @@ export function hashPalette(palette) {
   return (h >>> 0).toString(16);
 }
 
-/** 统计非空气方块数 (调色板 0 = air 的跳过) */
+/** 统计非空气方块数 (v2: 以名字符串判定 air; id!==0 仅作老数据兜底) */
 export function countNonAir(indices, palette) {
   let n = 0;
   for (let i = 0; i < indices.length; i++) {
     const block = palette[indices[i]];
-    if (block && block.id !== 0) n++;
+    if (!block) continue;
+    if (block.name !== undefined) {
+      if (block.name !== 'minecraft:air') n++;
+    } else if (block.id !== 0) {
+      n++; // 极老数据无 name 字段时退回数字判定
+    }
   }
   return n;
 }

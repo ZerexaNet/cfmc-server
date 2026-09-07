@@ -186,6 +186,40 @@ cfmc-server/
 
 密钥配置：`wrangler secret put AUTH_JWT_SECRET`（本地开发在 `.dev.vars` 写 `AUTH_JWT_SECRET=xxx`，未配置时回退到不安全 dev 密钥并打警告）
 
+## 全协议支持（v2 核心）
+
+服务端**不锁死 MC 版本**：1.8 ~ 1.21.8 任意版本的 CFMC Mod 客户端均可接入。
+
+### 实现原理
+
+```
+客户端 Mod (任意 MC 版本)
+   │  ① ClientHandshake v2: cfmcProto=2 + mcVersion("1.20.4") + mcProto(763)
+   ▼
+version-registry.js ── 识别协议号 → 版本族 (legacy/flat/modern)
+   ▼
+version-adapters.js ── 绑定适配器: 版本语义收敛点 (方块名规范化/能力协商/旧名映射)
+   ▼
+RegionDO (版本无关) ── 存储层以方块名字符串为主键, 线上协议与 MC 版本解耦
+```
+
+| 版本族 | 覆盖版本 | 特点处理 |
+|--------|---------|---------|
+| `legacy` | 1.8 ~ 1.12.2 (proto 47–340) | legacy 聊天码、高度 [0,256)、旧方块名映射 (grass_block→grass) |
+| `flat` | 1.13 ~ 1.20.1 (proto 393–763) | 字符串方块 ID、JSON 文本、高度 [-64,320) |
+| `modern` | 1.20.2+ (proto 764+) | 与 CFMC v2 同期设计, 无历史包袱 |
+| `generic` | 未上报/未知协议号 | 兜底: 浏览器调试、v1 老客户端 |
+
+### v2 协议变更（相对 v1）
+
+| 变更 | 原因 |
+|------|------|
+| `BlockPlace`/`BlockUpdate`: stateId(VarInt) → blockName(String) | 数字 ID 跨版本不稳定，名字跨版本恒定 |
+| `ChunkData` 调色板: numeric ID → 名字符串 | 客户端各版本用自己的注册表解析 |
+| `ClientHandshake`/`HandshakeAck` 尾部追加版本字段 | 向后兼容追加，旧端读到旧字段长度即停 |
+
+**加新 MC 版本 = 在 [`version-registry.js`](src/protocol/version-registry.js) 的 `MC_PROTOCOLS` 表加一行**，无其它代码改动。
+
 ## 开发路线图
 
 ### ✅ Phase 1 骨架（已完成）
@@ -202,6 +236,7 @@ cfmc-server/
 - [x] RegionDO v0.1：Alarm 驱动 20TPS Tick 循环 + 内存优先 + 批量持久化（**已完成**）
 - [x] 二进制协议编解码：VarInt / 帧 / 调色板 LongArray（**已完成，含单测**）
 - [x] Cesium 格式区块加载/保存 + 超平坦生成（**已完成**）
+- [x] 全协议支持 v2：版本注册表 + 适配器 + 方块名版本中立化（**已完成**，1.8~1.21.8）
 - [ ] 3D 世界可见、移动同步、方块放置/破坏、基础物理（客户端侧）
 - [ ] 客户端预测 + 服务端校正
 - [ ] Anvil 世界导入工具（cesium-migrator）

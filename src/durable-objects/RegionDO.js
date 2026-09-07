@@ -30,6 +30,8 @@
  */
 
 import { CLIENTBOUND, SERVERBOUND, PACKET_FLAGS, PROTOCOL_VERSION } from '../protocol/packet-definitions.js';
+import { decideHandshake, supportSummary } from '../protocol/version-registry.js';
+import { selectAdapter } from '../protocol/version-adapters.js';
 import { PacketReader, PacketWriter } from '../protocol/packet-writer.js';
 import { decompress } from '../protocol/compression.js';
 import { loadChunk, decodeBlockIndices } from '../storage/cesium-reader.js';
@@ -40,12 +42,15 @@ import {
   savePlayerState,
   encodeBlockIndices,
 } from '../storage/cesium-writer.js';
-import { resolveConfig, CHUNK, BLOCKS, ERROR_CODES } from '../utils/constants.js';
+import { resolveConfig, CHUNK, BLOCK_NAMES, ERROR_CODES } from '../utils/constants.js';
 import { worldToSectionIndex, clamp, Vec3 } from '../utils/math3d.js';
 import { logger } from '../utils/logger.js';
 
 /** 每tick最大移动距离 (方块) — 超过视为作弊丢弃 (20TPS × 10m ≈ 200m/s) */
 const MAX_MOVE_PER_TICK = 10;
+
+/** 空气方块名 (版本中立的 "空") — 与客户端 CFMCConstants.AIR_BLOCK_NAME 一致 */
+const AIR = BLOCK_NAMES.AIR;
 
 /* ==========================================================================
  * LRU 缓存 (cfmc.md: 最近 256 区块; 命中避免 D1 读, 这是配额的生死线)
@@ -175,6 +180,8 @@ export class RegionDO {
     this.state.acceptWebSocket(server, [uuid]);
 
     const spawn = new Vec3(0.5, -60, 0.5); // 出生点 (world_meta TODO)
+    // session 字段 (v2): 协议版本协商在收到 ClientHandshake 后完成,
+    // 连接瞬间先用 generic 适配器兜底 (浏览器调试 / 未上报版本)
     this.players.set(uuid, {
       name,
       pos: spawn.clone(),
@@ -184,16 +191,19 @@ export class RegionDO {
       lastKeepAlive: Date.now(),
       moved: false,
       joinedAt: Date.now(),
+      // ---- v2 全协议支持字段 ----
+      adapter: selectAdapter('generic'), // 适配器实例 (版本语义收敛点)
+      mcVersion: '',                     // 客户端上报的 MC 版本串 (如 "1.20.4")
+      mcProto: 0,                        // 客户端 MC 协议号 (0=未上报)
     });
 
     /* ---- 握手: HandshakeAck + JoinGame (二进制协议首批包) ---- */
-    // HandshakeAck: protocolVersion(VarInt) | regionX(I32) | regionZ(I32) | viewDistance(U8)
-    const ack = new PacketWriter(16);
-    ack.writeVarInt(PROTOCOL_VERSION);
-    ack.writeInt32(this.region.x);
-    ack.writeInt32(this.region.z);
-    ack.writeUInt8(this.config.viewDistance);
-    this.#sendTo(uuid, CLIENTBOUND.HANDSHAKE_ACK.id, ack.toUint8Array());
+    // HandshakeAck v2: protocolVersion(VarInt) | regionX(I32) | regionZ(I32) | viewDistance(U8)
+    //                  | adapter(String) | mcProtoMin(VarInt) | mcProtoMax(VarInt)
+    // 连接时先发 generic 范围; 收到 ClientHandshake 后会补发精确适配器信息
+    const support = supportSummary();
+    const ack = this.#buildHandshakeAck(selectAdapter('generic'), support);
+    this.#sendTo(uuid, CLIENTBOUND.HANDSHAKE_ACK.id, ack);
 
     // JoinGame: entityId(I32=0) | gamemode(U8=0) | dimension(I32=0) | spawnX/Y/Z(Double)
     const join = new PacketWriter(40);
@@ -220,6 +230,19 @@ export class RegionDO {
     }
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** HandshakeAck payload 构建 (v2: 尾部追加适配器名 + MC 协议支持范围) */
+  #buildHandshakeAck(adapter, support) {
+    const w = new PacketWriter(32);
+    w.writeVarInt(PROTOCOL_VERSION);
+    w.writeInt32(this.region.x);
+    w.writeInt32(this.region.z);
+    w.writeUInt8(this.config.viewDistance);
+    w.writeString(adapter.name);
+    w.writeVarInt(support.mcProtocolMin);
+    w.writeVarInt(support.mcProtocolMax);
+    return w.toUint8Array();
   }
 
   /** 首区块下发 (v0.1: 只发玩家所在 1 个区块作链路验证; 视距环 Phase 2) */
@@ -296,12 +319,44 @@ export class RegionDO {
   /** 按包 ID 分派 (未注册的包丢弃并计数) */
   #dispatchPacket(uuid, packetId, r) {
     switch (packetId) {
-      /* ClientHandshake: protocolVersion(VarInt) — v0.1 连接时已由 game.js 验证身份,
-       * 这里只校验协议版本一致性 */
+      /* ClientHandshake v2: protocolVersion(VarInt) | playerName(String)
+       *                     | mcVersion(String) | mcProtocol(VarInt)  ← v2 尾部追加
+       * 全协议支持核心: 据客户端 MC 协议号选择适配器, 版本语义收敛到 adapter;
+       * v1 老客户端缺尾部字段 → try/catch 容错为未上报 (generic 兜底, 不拒连)
+       */
       case SERVERBOUND.CLIENT_HANDSHAKE.id: {
+        const session = this.players.get(uuid);
         const clientVersion = r.readVarInt();
+        let mcVersion = '';
+        let mcProto = 0;
+        try {
+          r.readString(16);   // playerName (身份已在 game.js 由 JWT/URL 验证, 此处仅消耗)
+          mcVersion = r.readString(32);
+          mcProto = r.readVarInt();
+        } catch {
+          // v1 客户端: 尾部无 MC 版本字段 → 保持未上报状态
+        }
+
         if (clientVersion !== PROTOCOL_VERSION) {
-          this.#kick(uuid, `协议版本不匹配 (服务端 ${PROTOCOL_VERSION} / 客户端 ${clientVersion})`);
+          this.#kick(uuid, `CFMC 协议版本不匹配 (服务端 v${PROTOCOL_VERSION} / 客户端 v${clientVersion}), 请更新 Mod`);
+          break;
+        }
+
+        // ---- 全协议协商: 版本识别 → 适配器绑定 → 补发精确 ACK ----
+        const decision = decideHandshake(mcProto);
+        if (session) {
+          session.adapter = selectAdapter(decision.adapter);
+          session.mcVersion = mcVersion;
+          session.mcProto = mcProto;
+          logger.info('handshake_negotiated', {
+            uuid,
+            mcVersion: mcVersion || '(unreported)',
+            mcProto,
+            adapter: session.adapter.name,
+            known: decision.versionInfo?.known ?? false,
+          });
+          // 补发精确适配器信息 (v1 客户端多收几个尾部字节, 读到自己的字段长度即停, 无害)
+          this.#sendTo(uuid, CLIENTBOUND.HANDSHAKE_ACK.id, this.#buildHandshakeAck(session.adapter, supportSummary()));
         }
         break;
       }
@@ -347,13 +402,14 @@ export class RegionDO {
         break;
       }
 
-      /* BlockPlace: x(I32) y(I32) z(I32) stateId(VarInt) */
+      /* BlockPlace v2: x(I32) y(I32) z(I32) blockName(String)
+       * 版本中立: 客户端任意 MC 版本都用命名空间名上报, 服务端原样存储 */
       case SERVERBOUND.BLOCK_PLACE.id: {
         const x = r.readInt32();
         const y = r.readInt32();
         const z = r.readInt32();
-        const stateId = r.readVarInt();
-        this.inputQueue.push({ type: 'place', uuid, x, y, z, stateId });
+        const blockName = r.readString(128);
+        this.inputQueue.push({ type: 'place', uuid, x, y, z, blockName });
         break;
       }
 
@@ -517,41 +573,56 @@ export class RegionDO {
     p.moved = true;
   }
 
-  /** 挖掘 (status=完成才处理; 即挖即碎) */
+  /** 挖掘 (status=完成才处理; 即挖即碎) — 空气以名字符串表示, 版本中立 */
   async #handleDigging(input) {
-    await this.setBlockState(input.x, input.y, input.z, BLOCKS.AIR, input.uuid);
+    await this.setBlockState(input.x, input.y, input.z, AIR, input.uuid);
   }
 
-  /** 放置 (客户端上报 stateId; 物品栏校验 Phase 3) */
+  /** 放置 (客户端上报 blockName; 物品栏校验 Phase 3)
+   *  v2: 方块名由客户端适配器层上报 (任意 MC 版本都是命名空间名),
+   *  服务端用该玩家的适配器规范化后入库 */
   async #handlePlacement(input) {
-    // 基础防抖: 只接受注册表内的合法方块
-    if (input.stateId < 0 || input.stateId > 30000) return;
-    await this.setBlockState(input.x, input.y, input.z, input.stateId, input.uuid);
+    const p = this.players.get(input.uuid);
+    const normalized = (p?.adapter ?? selectAdapter('generic')).normalizeBlockName(input.blockName);
+    if (!normalized) {
+      logger.warn('place_rejected', { uuid: input.uuid, blockName: input.blockName });
+      return;
+    }
+    await this.setBlockState(input.x, input.y, input.z, normalized, input.uuid);
   }
 
   /**
-   * 读方块状态 (缓存未命中返回 0=air; 完整异步加载走 #getOrLoadChunk)
+   * 读方块名 (缓存未命中返回 minecraft:air; 完整异步加载走 #getOrLoadChunk)
+   * v2: 返回命名空间名而非数字 ID — 存储层版本中立
    */
-  getBlockState(wx, wy, wz) {
+  getBlockName(wx, wy, wz) {
     const cx = wx >> 4, cz = wz >> 4;
     const chunk = this.chunkCache.get(`${cx},${cz}`);
-    if (!chunk) return 0;
+    if (!chunk) return AIR;
 
     const sectionY = Math.floor(wy / 16);
     const section = chunk.sections.get(sectionY);
-    if (!section) return 0;
+    if (!section) return AIR;
 
     const idx = worldToSectionIndex(wx, wy, wz);
     const entry = section.palette[section.indices[idx]];
-    return entry ? entry.id : 0;
+    return entry ? entry.name : AIR;
+  }
+
+  /** @deprecated v1 数字接口, 兼容旧调用; 新代码一律用 getBlockName */
+  getBlockState(wx, wy, wz) {
+    return this.getBlockName(wx, wy, wz) === AIR ? 0 : 1;
   }
 
   /**
-   * 写方块状态: 改内存 + 标脏 + 广播 BlockUpdate + 记审计
+   * 写方块状态 (v2 name-based): 改内存 + 标脏 + 广播 BlockUpdate + 记审计
    * (不立即写库! persistDirty 每 5 秒统一落盘)
+   *
+   * @param {string} blockName 命名空间方块名 (调用前已过适配器规范化)
+   * @returns {Promise<string>} 旧方块名 (供 Undo/校验)
    */
-  async setBlockState(wx, wy, wz, newStateId, actorUuid = null) {
-    if (wy < CHUNK.MIN_Y || wy >= CHUNK.MAX_Y) return 0;
+  async setBlockState(wx, wy, wz, blockName, actorUuid = null) {
+    if (wy < CHUNK.MIN_Y || wy >= CHUNK.MAX_Y) return AIR;
 
     const cx = wx >> 4, cz = wz >> 4;
     const chunk = await this.#getOrLoadChunk(cx, cz); // 写路径必须确保加载
@@ -559,13 +630,13 @@ export class RegionDO {
     const section = this.#ensureSection(chunk, sectionY);
 
     const idx = worldToSectionIndex(wx, wy, wz);
-    const oldStateId = section.palette[section.indices[idx]]?.id ?? 0;
-    if (oldStateId === newStateId) return oldStateId;
+    const oldName = section.palette[section.indices[idx]]?.name ?? AIR;
+    if (oldName === blockName) return oldName; // 幂等: 同名不写
 
-    /* ---- 调色板管理: 找到/新建目标方块的下标 ---- */
-    let paletteIdx = section.palette.findIndex((e) => e.id === newStateId);
+    /* ---- 调色板管理 (以 name 为主键; id 仅作 section 内局部序号, air 恒为 0) ---- */
+    let paletteIdx = section.palette.findIndex((e) => e.name === blockName);
     if (paletteIdx === -1) {
-      section.palette.push({ id: newStateId, name: `state:${newStateId}` }); // TODO: 名称映射表
+      section.palette.push({ id: section.palette.length, name: blockName });
       paletteIdx = section.palette.length - 1;
     }
     section.indices[idx] = paletteIdx;
@@ -575,25 +646,27 @@ export class RegionDO {
     const key = `${cx},${cz}`;
     this.dirtyChunks.add(key);
 
-    // 审计日志 (随 persistDirty 批量写入)
+    // 审计日志 (随 persistDirty 批量写入; state_id 列以字符串存方块名,
+    // SQLite 动态类型兼容 — 方块名比数字 ID 更有审计价值)
     this.pendingLogEntries.push({
       actorUuid: actorUuid,
       actorType: actorUuid ? 'player' : 'system',
       x: wx, y: wy, z: wz,
-      oldStateId, newStateId,
+      oldStateId: oldName,
+      newStateId: blockName,
       tick: this.tickCount,
       at: Date.now(),
     });
 
-    /* ---- BlockUpdate 广播: x(I32) y(I32) z(I32) stateId(VarInt) ---- */
-    const w = new PacketWriter(20);
+    /* ---- BlockUpdate 广播 v2: x(I32) y(I32) z(I32) blockName(String) ---- */
+    const w = new PacketWriter(24);
     w.writeInt32(wx);
     w.writeInt32(wy);
     w.writeInt32(wz);
-    w.writeVarInt(newStateId);
+    w.writeString(blockName);
     this.#broadcast(CLIENTBOUND.BLOCK_UPDATE.id, w.toUint8Array());
 
-    return oldStateId;
+    return oldName;
   }
 
   /* ==========================================================================
@@ -634,15 +707,16 @@ export class RegionDO {
     return chunk;
   }
 
-  /** 超平坦: 基岩(-64) + 泥土(-63..-61) + 草方块(-60) */
+  /** 超平坦: 基岩(-64) + 泥土(-63..-61) + 草方块(-60)
+   *  v2: 调色板 entry = { id(局部序号), name(命名空间名) } — 版本中立 */
   #generateFlatTerrain(chunk) {
     const section = this.#ensureSection(chunk, -4);
-    // 初始化调色板 (顺序即下标)
+    // 初始化调色板 (顺序即下标; id 与数组下标一致, air 恒为 0)
     section.palette = [
-      { id: BLOCKS.AIR, name: 'minecraft:air' },
-      { id: BLOCKS.BEDROCK, name: 'minecraft:bedrock' },
-      { id: BLOCKS.DIRT, name: 'minecraft:dirt' },
-      { id: BLOCKS.GRASS_BLOCK, name: 'minecraft:grass_block' },
+      { id: 0, name: BLOCK_NAMES.AIR },
+      { id: 1, name: BLOCK_NAMES.BEDROCK },
+      { id: 2, name: BLOCK_NAMES.DIRT },
+      { id: 3, name: BLOCK_NAMES.GRASS_BLOCK },
     ];
     section.indices.fill(0); // 全空气
 
@@ -659,12 +733,12 @@ export class RegionDO {
     section.dirty = true;
   }
 
-  /** 确保区块的某个 Section 存在 (惰性分配) */
+  /** 确保区块的某个 Section 存在 (惰性分配; 调色板首项恒为空气) */
   #ensureSection(chunk, sectionY) {
     let s = chunk.sections.get(sectionY);
     if (!s) {
       s = {
-        palette: [{ id: BLOCKS.AIR, name: 'minecraft:air' }],
+        palette: [{ id: 0, name: BLOCK_NAMES.AIR }],
         indices: new Uint16Array(CHUNK.SECTION_VOLUME),
         skyLight: null,
         blockLight: null,
@@ -675,7 +749,8 @@ export class RegionDO {
     return s;
   }
 
-  /** ChunkData payload: chunkX(I32) chunkZ(I32) fullChunk(Bool) sectionCount(VarInt) + sections */
+  /** ChunkData payload: chunkX(I32) chunkZ(I32) fullChunk(Bool) sectionCount(VarInt) + sections
+   *  v2: 调色板下发名字符串 — 客户端各 MC 版本用自己的注册表解析成数字 ID */
   #buildChunkDataPayload(chunk) {
     const w = new PacketWriter(512);
     w.writeInt32(chunk.cx);
@@ -686,13 +761,13 @@ export class RegionDO {
     w.writeVarInt(packed.length);
 
     for (const [sectionY, s] of packed) {
-      // section: sectionY(VarInt) blockCount(U16) paletteLen(VarInt) palette[](VarInt)
+      // section: sectionY(VarInt) blockCount(U16) paletteLen(VarInt) palette[](String)
       //          dataLen(VarInt) data[](未压缩 LongArray, TODO: 压缩协商)
-      const nonAir = s.indices.reduce((n, pi) => (s.palette[pi]?.id !== 0 ? n + 1 : n), 0);
+      const nonAir = s.indices.reduce((n, pi) => (s.palette[pi]?.name !== AIR ? n + 1 : n), 0);
       w.writeVarInt(sectionY);
       w.writeUInt16(nonAir);
       w.writeVarInt(s.palette.length);
-      for (const entry of s.palette) w.writeVarInt(entry.id);
+      for (const entry of s.palette) w.writeString(entry.name);
 
       // 打包索引 (64bit LongArray, 与客户端 decodeBlockIndices 互逆)
       const raw = encodeBlockIndices(s.indices, s.palette.length);

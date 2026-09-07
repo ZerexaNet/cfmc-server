@@ -62,8 +62,27 @@ export const DIMENSIONS = {
 };
 
 /**
+ * 方块命名空间名 (v2 全协议支持的存储主键)
+ * ----------------------------------------------------------------
+ * v2 起线上协议/存储层以"名字符串"为准, 数字 stateId 仅剩参考价值
+ * (不同 MC 版本同一方块的数字 ID 不同, 名字跨版本稳定)。
+ * @readonly
+ * @enum {string}
+ */
+export const BLOCK_NAMES = {
+  AIR: 'minecraft:air',
+  STONE: 'minecraft:stone',
+  GRASS_BLOCK: 'minecraft:grass_block',
+  DIRT: 'minecraft:dirt',
+  BEDROCK: 'minecraft:bedrock',
+  COBBLESTONE: 'minecraft:cobblestone',
+  OAK_PLANKS: 'minecraft:oak_planks',
+};
+
+/**
  * 高频方块状态 ID 参考 (1.20.4)
  * ⚠️ 仅覆盖骨架开发/调试所需; 完整映射 Phase 2 用脚本生成
+ * ⚠️ v2 已废弃数字 ID 传输, 此表仅保留给 Phase 3 原版协议翻译层用
  * @readonly
  * @enum {number}
  */

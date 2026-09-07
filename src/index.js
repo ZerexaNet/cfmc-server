@@ -36,6 +36,7 @@ import {
 import { handleAuthRequest } from './workers/auth.js';
 import { handleGameWebSocket } from './workers/game.js';
 import { PROTOCOL_VERSION } from './protocol/packet-definitions.js';
+import { supportSummary } from './protocol/version-registry.js';
 
 /** DO 类导出 —— 必须在入口模块, 否则 wrangler deploy 校验失败 */
 export { WorldManagerDO } from './durable-objects/WorldManagerDO.js';
@@ -121,10 +122,12 @@ async function route(request, env, url, ctx) {
       description: 'Serverless Minecraft server on Cloudflare Edge',
       protocolVersion: PROTOCOL_VERSION,
       phase: '2-core', // 当前开发阶段标识, 客户端可据此判断服务端能力
+      // 全协议支持: 1.8~1.21.x 任意 MC 版本的 CFMC Mod 均可接入 (v2 协议版本中立)
+      mcSupport: supportSummary(),
       capabilities: {
         websocket: true,
         chat: true,
-        world: true,   // RegionDO v0.1: 超平坦世界 + 方块读写
+        world: true,   // RegionDO v0.2: name-based 方块 + 全协议协商
         auth: true,    // Auth Worker: 四种认证模式
       },
       endpoints: ['/health', '/ws/game', '/auth/*', '/api/* (todo)'],

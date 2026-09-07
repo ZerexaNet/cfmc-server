@@ -33,8 +33,18 @@
  * ============================================================================
  */
 
-/** 协议版本 —— 不兼容变更时 +1, 握手阶段两端协商 */
-export const PROTOCOL_VERSION = 1;
+/** 协议版本 —— 不兼容变更时 +1, 握手阶段两端协商
+ *
+ * v1 → v2 (2025-09 全协议支持改造):
+ *   1. ClientHandshake (0x10) 尾部追加 mcVersion(String) + mcProtocol(VarInt)
+ *   2. HandshakeAck (0x01) 尾部追加 adapter(String) + mcProtoMin/max(VarInt)
+ *   3. BlockPlace (0x15) stateId(VarInt) → blockName(String) —— 版本中立!
+ *   4. ChunkData (0x03) 调色板 numeric ID → 名字符串
+ *   5. BlockUpdate (0x04) stateId(VarInt) → blockName(String)
+ *   兼容策略: 新字段一律尾部追加, 旧端读到旧字段长度即停 → 旧客户端连新服务端
+ *   仅缺新能力不会崩 (要求 #10 向前兼容)。
+ */
+export const PROTOCOL_VERSION = 2;
 
 /** 单包大小硬上限 (1 MiB)。原版为 2 MiB (2^21);
  *  本项目区块走调色板压缩, 实测单 Section < 8KB, 1MiB 已非常宽裕 */
@@ -69,10 +79,10 @@ export const PACKET_FLAGS = {
  * @enum {{ id: number, name: string, priority: 'P0'|'P1'|'P2', desc: string }}
  */
 export const CLIENTBOUND = {
-  HANDSHAKE_ACK: { id: 0x01, name: 'HandshakeAck', priority: 'P0', desc: '握手确认 + 协商参数 (协议版本/压缩阈值/视距)' },
+  HANDSHAKE_ACK: { id: 0x01, name: 'HandshakeAck', priority: 'P0', desc: '握手确认 + 协商参数 (协议版本/视距/适配器/MC协议范围) — v2 尾部追加 adapter+mcProto 范围' },
   JOIN_GAME: { id: 0x02, name: 'JoinGame', priority: 'P0', desc: '加入游戏: 实体ID/游戏模式/维度/出生点' },
-  CHUNK_DATA: { id: 0x03, name: 'ChunkData', priority: 'P0', desc: '区块数据 (完整/增量), 调色板+LongArray 编码' },
-  BLOCK_UPDATE: { id: 0x04, name: 'BlockUpdate', priority: 'P1', desc: '单方块变化通知' },
+  CHUNK_DATA: { id: 0x03, name: 'ChunkData', priority: 'P0', desc: '区块数据 (完整/增量), 调色板(名字符串)+LongArray 编码 — v2: 方块名版本中立' },
+  BLOCK_UPDATE: { id: 0x04, name: 'BlockUpdate', priority: 'P1', desc: '单方块变化通知 — v2: blockName(String) 替代 stateId' },
   ENTITY_SPAWN: { id: 0x05, name: 'EntitySpawn', priority: 'P1', desc: '实体生成 (含玩家以外实体)' },
   ENTITY_MOVE: { id: 0x06, name: 'EntityMove', priority: 'P0', desc: '实体位置/朝向更新 (可批量多个实体, 差量编码)' },
   ENTITY_DESTROY: { id: 0x07, name: 'EntityDestroy', priority: 'P2', desc: '实体销毁' },
@@ -96,12 +106,12 @@ export const CLIENTBOUND = {
  * @enum {{ id: number, name: string, freq: string, desc: string }}
  */
 export const SERVERBOUND = {
-  CLIENT_HANDSHAKE: { id: 0x10, name: 'ClientHandshake', freq: '连接时一次', desc: '握手请求: 协议版本/认证Token/客户端信息' },
+  CLIENT_HANDSHAKE: { id: 0x10, name: 'ClientHandshake', freq: '连接时一次', desc: '握手请求: 协议版本/玩家名 — v2 尾部追加 mcVersion(String)+mcProtocol(VarInt) 供全协议协商' },
   PLAYER_POSITION: { id: 0x11, name: 'PlayerPosition', freq: '每tick', desc: '位置更新 (X,Y,Z,OnGround)' },
   PLAYER_LOOK: { id: 0x12, name: 'PlayerLook', freq: '每tick', desc: '视角旋转 (Yaw,Pitch)' },
   PLAYER_POSITION_LOOK: { id: 0x13, name: 'PlayerPositionLook', freq: '每tick(推荐)', desc: '位置+视角合并包 (带相对/绝对标志位, 省带宽)' },
   PLAYER_DIGGING: { id: 0x14, name: 'PlayerDigging', freq: '操作时', desc: '挖掘 (开始/取消/完成三态)' },
-  BLOCK_PLACE: { id: 0x15, name: 'BlockPlace', freq: '操作时', desc: '放置方块' },
+  BLOCK_PLACE: { id: 0x15, name: 'BlockPlace', freq: '操作时', desc: '放置方块 — v2: blockName(String) 替代 stateId, 各版本客户端各自解析' },
   HELD_ITEM_CHANGE: { id: 0x16, name: 'HeldItemChange', freq: '操作时', desc: '切换快捷栏槽位' },
   CHAT_MESSAGE: { id: 0x17, name: 'ChatMessage', freq: '操作时', desc: '发送聊天/命令' },
   KEEP_ALIVE: { id: 0x18, name: 'KeepAlive', freq: '每10秒', desc: '心跳应答' },
