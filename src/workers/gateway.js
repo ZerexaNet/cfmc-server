@@ -20,15 +20,20 @@
  * ============================================================================
  */
 
-/** CORS 允许的来源 (Phase 3 Web管理面板部署后在此追加生产域名) */
-const CORS_ALLOW_ORIGIN = '*'; // 开发期放开; 生产应收敛为管理面板域名
+/** CORS 允许的来源: env.ADMIN_ORIGIN (面板域名, 推荐生产配置) > 开发期 '*' */
+function corsOrigin(env) {
+  return env?.ADMIN_ORIGIN ?? '*';
+}
 
-const CORS_BASE_HEADERS = {
-  'Access-Control-Allow-Origin': CORS_ALLOW_ORIGIN,
-  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-  'Access-Control-Max-Age': '86400', // 预检结果缓存24h, 减少OPTIONS风暴
-};
+/** CORS 头 (origin 随 env 动态; 默认开发期 '*' — 生产设 ADMIN_ORIGIN 收敛) */
+function corsHeaders(env) {
+  return {
+    'Access-Control-Allow-Origin': corsOrigin(env),
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Admin-Token',
+    'Access-Control-Max-Age': '86400',
+  };
+}
 
 /**
  * 构造 JSON 响应
@@ -54,14 +59,14 @@ export function errorResponse(code, message, status = 400) {
 }
 
 /** CORS 预检处理 */
-export function handleOptions(_request) {
-  return new Response(null, { status: 204, headers: CORS_BASE_HEADERS });
+export function handleOptions(_request, env) {
+  return new Response(null, { status: 204, headers: corsHeaders(env) });
 }
 
 /** 给业务响应追加 CORS 头 */
-export function withCors(response, _request) {
+export function withCors(response, _request, env) {
   const headers = new Headers(response.headers);
-  for (const [k, v] of Object.entries(CORS_BASE_HEADERS)) {
+  for (const [k, v] of Object.entries(corsHeaders(env))) {
     if (!headers.has(k)) headers.set(k, v);
   }
   return new Response(response.body, {

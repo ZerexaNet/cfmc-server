@@ -94,6 +94,8 @@ export const CLIENTBOUND = {
   UPDATE_HEALTH: { id: 0x0D, name: 'UpdateHealth', priority: 'P2', desc: '血量/饥饿/饱和度' },
   SET_SLOT: { id: 0x0E, name: 'SetSlot', priority: 'P2', desc: '单槽位物品更新' },
   WINDOW_ITEMS: { id: 0x0F, name: 'WindowItems', priority: 'P2', desc: '整个容器物品列表' },
+  // ---- 0x20+ Phase 3/4 扩展 (增量包: 旧客户端忽略未知 ID, 向前兼容) ----
+  PLAYER_POSITION: { id: 0x21, name: 'PlayerPosition', priority: 'P1', desc: '服务端权威位置下发 (TP/反作弊回拉/重生): x,y,z(D) yaw,pitch(F)' },
 };
 
 /**
@@ -122,6 +124,8 @@ export const SERVERBOUND = {
   UPDATE_SIGN: { id: 0x1D, name: 'UpdateSign', freq: '操作时', desc: '编辑告示牌' },
   ANIMATION: { id: 0x1E, name: 'Animation', freq: '操作时', desc: '手部动画 (挥臂/伤害)' },
   TELEPORT_CONFIRM: { id: 0x1F, name: 'TeleportConfirm', freq: 'TP后', desc: '确认传送 (抗作弊: 服务端TP必须等确认)' },
+  // ---- 0x20+ Phase 4 扩展 (增量包: 旧客户端不发, 服务端按"未知包"静默容忍) ----
+  INTERACT_ENTITY: { id: 0x20, name: 'InteractEntity', freq: '攻击/交互时', desc: '实体交互: type(U8: 0=攻击 1=交互) entityId(I32) — 怪物AI战斗闭环' },
 };
 
 /** PlayerPositionLook (0x13) 的 flags 位掩码 —— 相对坐标优化 */

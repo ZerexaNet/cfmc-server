@@ -35,8 +35,11 @@ import {
 } from './workers/gateway.js';
 import { handleAuthRequest } from './workers/auth.js';
 import { handleGameWebSocket } from './workers/game.js';
+import { handleApiRequest } from './workers/api.js';
 import { PROTOCOL_VERSION } from './protocol/packet-definitions.js';
 import { supportSummary } from './protocol/version-registry.js';
+// Text 规则导入 (wrangler.toml [[rules]] type="Text") — Phase 3 管理面板
+import panelHtml from './admin/panel.html';
 
 /** DO 类导出 —— 必须在入口模块, 否则 wrangler deploy 校验失败 */
 export { WorldManagerDO } from './durable-objects/WorldManagerDO.js';
@@ -61,9 +64,9 @@ export default {
     const url = new URL(request.url);
 
     try {
-      // ---------- 0. CORS 预检 (Web 管理面板 Phase 3 会跨域访问) ----------
+      // ---------- 0. CORS 预检 (Web 管理面板跨域访问) ----------
       if (request.method === 'OPTIONS') {
-        return handleOptions(request);
+        return handleOptions(request, env);
       }
 
       // ---------- 1. 限流 (仅对非 WebSocket 升级请求生效) ----------
@@ -83,7 +86,7 @@ export default {
 
       // ---------- 3. 统一日志 + CORS 包裹 ----------
       logRequest(request, response, startTime);
-      return withCors(response, request);
+      return withCors(response, request, env);
     } catch (err) {
       // 全局兜底: 任何未捕获异常都不能泄漏堆栈给客户端
       console.error(
@@ -97,7 +100,8 @@ export default {
       );
       return withCors(
         errorResponse('INTERNAL_ERROR', '服务器内部错误', 500),
-        request
+        request,
+        env
       );
     }
   },
@@ -108,9 +112,10 @@ export default {
  * ----------------------------------------------------------------
  * GET  /            服务信息 (协议版本/能力集, 供客户端 Mod 发现服务)
  * GET  /health      健康检查 (负载均衡/监控探针)
+ * GET  /admin       Web 管理面板 (Phase 3)
  * GET  /ws/game     WebSocket 升级 → 验证身份 → 转发给 RegionDO (game.js)
  * ANY  /auth/*      认证服务: 登录/刷新/校验/吊销/皮肤 (auth.js)
- * ANY  /api/*       RESTful API (TODO Phase 3)
+ * ANY  /api/*       RESTful API: 统计/在线/封禁/广播 (api.js, Phase 3)
  */
 async function route(request, env, url, ctx) {
   const { pathname } = url;
@@ -121,16 +126,24 @@ async function route(request, env, url, ctx) {
       name: 'CFMC-Edge',
       description: 'Serverless Minecraft server on Cloudflare Edge',
       protocolVersion: PROTOCOL_VERSION,
-      phase: '2-core', // 当前开发阶段标识, 客户端可据此判断服务端能力
+      phase: '3-core', // Phase 3: 生产化 (权限/反作弊/命令/背包/重连/面板/监控)
       // 全协议支持: 1.8~1.21.x 任意 MC 版本的 CFMC Mod 均可接入 (v2 协议版本中立)
       mcSupport: supportSummary(),
       capabilities: {
         websocket: true,
         chat: true,
-        world: true,   // RegionDO v0.2: name-based 方块 + 全协议协商
-        auth: true,    // Auth Worker: 四种认证模式
+        world: true,
+        auth: true,
+        commands: true,      // P3 管理命令
+        inventory: true,     // P3 背包同步
+        reconnect: true,     // P3 断线重连
+        entities: true,      // P4 怪物 AI
+        claims: true,        // P4 土地保护
+        economy: true,       // P4 经济系统
+        plugins: true,       // P4 插件事件总线
+        adminPanel: '/admin',
       },
-      endpoints: ['/health', '/ws/game', '/auth/*', '/api/* (todo)'],
+      endpoints: ['/health', '/ws/game', '/auth/*', '/api/*', '/admin'],
     });
   }
 
@@ -154,10 +167,16 @@ async function route(request, env, url, ctx) {
     return handleAuthRequest(request, env, url);
   }
 
-  // ===== RESTful API (Phase 3) =====
+  // ===== Web 管理面板 (Phase 3): 单文件 SPA 由 Worker 直接托管 =====
+  if (pathname === '/admin' && request.method === 'GET') {
+    return new Response(panelHtml, {
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  }
+
+  // ===== RESTful API (Phase 3): 面板数据源 + 管理动作 =====
   if (pathname.startsWith('/api/')) {
-    // TODO(Phase 3): 在线人数/服务器统计/Web管理面板数据源
-    return errorResponse('NOT_IMPLEMENTED', 'API Worker 将在 Phase 3 实现', 501);
+    return handleApiRequest(request, env);
   }
 
   // ===== 404 兜底 =====

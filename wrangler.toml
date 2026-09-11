@@ -14,6 +14,11 @@ main = "src/index.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# HTML 文本导入规则: index.js `import panelHtml from './admin/panel.html'`
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+
 # ============================================================
 # Durable Objects 类定义
 # ------------------------------------------------------------
@@ -96,6 +101,17 @@ TICK_RATE_MS = "50"                     # 20 TPS
 PERSIST_INTERVAL_MS = "5000"            # 5秒持久化一次
 VIEW_DISTANCE = "6"                     # 区块视距
 COMPRESSION_THRESHOLD = "256"           # 超过此大小的包才压缩
+# ---- Phase 3/4 ----
+ADMIN_ORIGIN = ""                       # 管理面板域名 (CORS 收敛; 空 = 开发期 *)
+RECONNECT_GRACE_MS = "60000"            # 断线重连宽限 (期内恢复原状态)
+MAX_ENTITIES_PER_REGION = "12"          # 单区域实体上限 (怪物 AI)
+CHAT_RATE_LIMIT = "5"                   # 聊天限流: 条数/窗口
+CHAT_RATE_WINDOW_MS = "5000"            # 聊天限流窗口
+CHAT_HISTORY_SIZE = "100"               # 聊天历史保留条数
+# Secrets (wrangler secret put, 不写在本文件):
+#   AUTH_JWT_SECRET     — JWT 签名密钥 (认证, 必需)
+#   ADMIN_TOKEN         — Web 面板/管理 API 令牌 (Phase 3, 必需)
+#   ALERT_WEBHOOK_URL   — 告警 webhook (如 Discord/飞书, 可选)
 
 # ============================================================
 # Placement (智能路由)

@@ -99,10 +99,13 @@ npx wrangler kv namespace create CACHE
 npx wrangler r2 bucket create cfmc-backups
 npx wrangler queues create EVENTS_QUEUE
 
-# 5. 配置 JWT 签名密钥（Secret 保存，不落盘、不进 git）
+# 5. 配置密钥（Secret 保存，不落盘、不进 git）
 openssl rand -hex 32 | npx wrangler secret put AUTH_JWT_SECRET
+openssl rand -hex 32 | npx wrangler secret put ADMIN_TOKEN      # 管理面板/管理 API 令牌
 
-# 6. 部署
+# 6. 老部署需跑一次 schema 迁移（新增 bans/chat_history/coins/chunk_claims）
+npx wrangler d1 execute cfmc-users --remote --file=src/storage/migrations/002-phase3-p4.sql -y
+npx wrangler d1 execute cfmc-world --remote --file=src/storage/migrations/002-phase3-p4.sql -y
 npm run deploy
 
 # 7. 验证（URL 换成上一步输出的 workers.dev 地址）
@@ -227,11 +230,17 @@ npx wrangler queues create EVENTS_QUEUE
 
 ### 3.7 配置 Secrets（必须）
 
-`AUTH_JWT_SECRET` 用于签发/校验 Access Token 与密码哈希加盐，**必须**在部署前配置：
+| Secret | 必需 | 用途 |
+|--------|------|------|
+| `AUTH_JWT_SECRET` | 是 | 签发/校验 Access Token |
+| `ADMIN_TOKEN` | 面板用 | Web 管理面板（`/admin`）与管理 API（`/api/admin/*`）鉴权 |
+| `ALERT_WEBHOOK_URL` | 否 | 监控告警 webhook（Discord/飞书 Incoming Webhook 等） |
 
 ```bash
 # 生成 64 位强随机 hex 并直接写入 Secret（不经过 shell 历史，不落盘）
 openssl rand -hex 32 | npx wrangler secret put AUTH_JWT_SECRET
+openssl rand -hex 32 | npx wrangler secret put ADMIN_TOKEN
+npx wrangler secret put ALERT_WEBHOOK_URL   # 可选，粘 webhook 地址
 ```
 
 - Secret 与代码分离，`wrangler.toml` 里**永远不要**写真实密钥；
@@ -277,6 +286,12 @@ curl $BASE/
 ```
 
 `/` 返回的 `mcSupport` 字段即"全协议支持"的自检结果（正常应显示 1.8 ~ 1.21.x 均可接入）。最后用客户端 Mod 实测：安装对应版本 jar → 按 P 打开连接界面 → 填入 `wss://cfmc-edge.<你的子域>.workers.dev/ws/game` → 选择认证模式登录进服。
+
+### 3.11 管理面板与运维端点（Phase 3）
+
+- 面板：浏览器打开 `https://<你的域名>/admin`，输入 `ADMIN_TOKEN` 即可查看在线/区域/TPS、踢人、封禁、全服广播、维护模式开关、聊天审计；
+- API：`GET /api/stats` / `GET /api/online` 公开只读；`/api/admin/*` 需 `X-Admin-Token` 头；
+- 旧世界导入：`npm run import:anvil -- <anvil存档目录>`（解析 region/*.mca → Cesium SQL → 灌入 D1）。
 
 ## 4. 自定义域名（可选）
 
@@ -354,6 +369,9 @@ npx wrangler d1 execute cfmc-users --remote --command "SELECT * FROM login_audit
 git pull origin main
 npm install          # devDependencies 可能更新 (wrangler 版本)
 npm test             # 先跑测试
+# schema 有变更时跑迁移 (幂等; 只加列/加表):
+npx wrangler d1 execute cfmc-users --remote --file=src/storage/migrations/002-phase3-p4.sql -y
+npx wrangler d1 execute cfmc-world --remote --file=src/storage/migrations/002-phase3-p4.sql -y
 npm run deploy       # 再部署
 ```
 

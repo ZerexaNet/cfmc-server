@@ -148,7 +148,28 @@ export const ERROR_CODES = {
   AUTH_MODE_UNSUPPORTED: 'AUTH_MODE_UNSUPPORTED',
   REGION_FULL: 'REGION_FULL', // 超过 MAX_PLAYERS_PER_REGION
   RATE_LIMITED: 'RATE_LIMITED',
+  BANNED: 'BANNED', // Phase 3: 封禁拦截 (game.js 路由前检查)
+  MAINTENANCE: 'MAINTENANCE', // Phase 3: 维护模式
   INTERNAL_ERROR: 'INTERNAL_ERROR',
+};
+
+/* ==========================================================================
+ * Phase 3/4 常量
+ * ======================================================================== */
+
+/** 反作弊/重连/实体/经济参数 ([vars] 可覆盖, 见 resolveConfig) */
+export const PHASE_DEFAULTS = {
+  /** 断线重连宽限 (ms): 期内同 uuid 重连恢复原状态 */
+  RECONNECT_GRACE_MS: 60_000,
+  /** 单区域实体上限 (怪物 AI) */
+  MAX_ENTITIES_PER_REGION: 12,
+  /** 聊天速率限制: 窗口内条数 / 窗口 ms */
+  CHAT_RATE_LIMIT: 5,
+  CHAT_RATE_WINDOW_MS: 5_000,
+  /** 聊天历史滚动保留条数 (ChatDO 内存 ring + D1) */
+  CHAT_HISTORY_SIZE: 100,
+  /** 监控告警 webhook 节流 (同级别消息最小间隔 ms) */
+  ALERT_THROTTLE_MS: 60_000,
 };
 
 /**
@@ -174,5 +195,15 @@ export function resolveConfig(env = {}) {
     viewDistance: clamp(int(env.VIEW_DISTANCE, DEFAULTS.VIEW_DISTANCE), 2, 16), // 原版上限 32, 服务端按16封顶省内存
     maxPlayersPerRegion: clamp(int(env.MAX_PLAYERS_PER_REGION, DEFAULTS.MAX_PLAYERS_PER_REGION), 1, 100),
     compressionThreshold: clamp(int(env.COMPRESSION_THRESHOLD, DEFAULTS.COMPRESSION_THRESHOLD), 0, 4096),
+
+    // ---- Phase 3/4 ----
+    reconnectGraceMs: clamp(int(env.RECONNECT_GRACE_MS, PHASE_DEFAULTS.RECONNECT_GRACE_MS), 0, 600_000),
+    maxEntitiesPerRegion: clamp(int(env.MAX_ENTITIES_PER_REGION, PHASE_DEFAULTS.MAX_ENTITIES_PER_REGION), 0, 64),
+    chatRateLimit: clamp(int(env.CHAT_RATE_LIMIT, PHASE_DEFAULTS.CHAT_RATE_LIMIT), 1, 60),
+    chatRateWindowMs: clamp(int(env.CHAT_RATE_WINDOW_MS, PHASE_DEFAULTS.CHAT_RATE_WINDOW_MS), 1000, 60_000),
+    chatHistorySize: clamp(int(env.CHAT_HISTORY_SIZE, PHASE_DEFAULTS.CHAT_HISTORY_SIZE), 10, 1000),
+    alertWebhookUrl: env.ALERT_WEBHOOK_URL ?? '', // 监控告警 (Secret 推荐而非 vars)
+    alertThrottleMs: PHASE_DEFAULTS.ALERT_THROTTLE_MS,
+    regionChatHistorySize: PHASE_DEFAULTS.CHAT_HISTORY_SIZE,
   };
 }

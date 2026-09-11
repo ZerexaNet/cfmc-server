@@ -17,6 +17,8 @@
     "deploy": "wrangler deploy",
     "init:d1": "bash scripts/init-d1.sh",
     "init:d1:local": "bash scripts/init-d1.sh --local",
+    "migrate:d1": "npx wrangler d1 execute cfmc-users --remote --file=src/storage/migrations/002-phase3-p4.sql -y",
+    "import:anvil": "bash scripts/import-world.sh",
     "tail": "wrangler tail --format pretty",
     "test": "vitest run"
   },

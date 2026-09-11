@@ -207,3 +207,16 @@ CREATE TABLE IF NOT EXISTS scheduled_ticks (
 );
 CREATE INDEX IF NOT EXISTS idx_scheduled_target ON scheduled_ticks (target_tick);
 CREATE INDEX IF NOT EXISTS idx_scheduled_pos    ON scheduled_ticks (x, y, z);
+
+-- -------------------------------------------------------------
+-- [Phase 4] 土地认领 (区块级保护): RegionDO 内存快照 + 写穿透
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS chunk_claims (
+    chunk_x    INTEGER NOT NULL,
+    chunk_z    INTEGER NOT NULL,
+    owner_uuid TEXT NOT NULL,
+    owner_name TEXT NOT NULL DEFAULT '',
+    claimed_at INTEGER NOT NULL,
+    PRIMARY KEY (chunk_x, chunk_z)
+);
+CREATE INDEX IF NOT EXISTS idx_chunk_claims_owner ON chunk_claims (owner_uuid);

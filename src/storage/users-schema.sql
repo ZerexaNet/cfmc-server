@@ -52,8 +52,12 @@ CREATE TABLE IF NOT EXISTS player_data (
     xp_level      INTEGER DEFAULT 0,
     xp_progress   REAL DEFAULT 0,
 
-    -- 物品栏: JSON 序列化的 36格+装备+副手 (TODO Phase 3: 完整背包同步)
+    -- 物品栏: JSON 序列化的 36格+装备+副手 (Phase 3 完整背包同步)
     inventory     TEXT,
+
+    -- Phase 3/4: 角色 (player/moderator/admin) 与 金币 (经济系统)
+    role          TEXT NOT NULL DEFAULT 'player',
+    coins         INTEGER NOT NULL DEFAULT 100,
 
     -- 最后活跃: 用于"7天不活跃清临时实体"等清理任务
     last_seen_at  INTEGER NOT NULL,
@@ -61,6 +65,35 @@ CREATE TABLE IF NOT EXISTS player_data (
     FOREIGN KEY (uuid) REFERENCES users (uuid)
 );
 CREATE INDEX IF NOT EXISTS idx_player_data_seen ON player_data (last_seen_at);
+
+-- -------------------------------------------------------------
+-- [Phase 3] 封禁表: WorldManagerDO 缓存 + 路由前拦截
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS bans (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT,
+    uuid       TEXT,
+    reason     TEXT NOT NULL DEFAULT '',
+    by_name    TEXT NOT NULL DEFAULT 'system',
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_bans_name ON bans (name);
+CREATE INDEX IF NOT EXISTS idx_bans_uuid ON bans (uuid);
+
+-- -------------------------------------------------------------
+-- [Phase 3] 聊天历史 (ChatDO 批量落库, Web 面板审计)
+-- -------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS chat_history (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_name TEXT NOT NULL,
+    from_uuid TEXT,
+    channel   TEXT NOT NULL DEFAULT 'global',
+    to_uuid   TEXT,
+    message   TEXT NOT NULL,
+    at        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_history_at ON chat_history (at);
 
 -- -------------------------------------------------------------
 -- 会话记录 (登录审计; Token 本体存 KV, 这里只留审计痕迹)

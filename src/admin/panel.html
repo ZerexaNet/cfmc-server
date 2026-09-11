@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<!-- ============================================================
+  CFMC-Edge Web 管理面板 (Phase 3) — 零构建单文件 SPA
+  托管: Worker 直接返回本文件 (GET /admin); 也可放 Cloudflare Pages
+  鉴权: 使用者输入 ADMIN_TOKEN → localStorage 保存 → X-Admin-Token 头
+============================================================ -->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CFMC-Edge 管理面板</title>
+<style>
+  :root { --bg:#0f1419; --card:#1a2129; --line:#2b3542; --fg:#dce3ec; --dim:#8a97a8; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --acc:#38bdf8; }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--fg); font:14px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif; padding:24px; }
+  h1 { font-size:20px; margin-bottom:4px; } .sub { color:var(--dim); font-size:12px; margin-bottom:20px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .card .k { color:var(--dim); font-size:12px; } .card .v { font-size:24px; font-weight:700; margin-top:2px; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  @media (max-width:860px){ .row { grid-template-columns:1fr; } }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  section h2 { font-size:14px; color:var(--acc); margin-bottom:10px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--dim); font-weight:500; }
+  input,button { font:inherit; border-radius:8px; border:1px solid var(--line); background:#0d1218; color:var(--fg); padding:7px 10px; }
+  button { background:#1d4ed8; border-color:#1d4ed8; cursor:pointer; } button:hover { filter:brightness(1.15); }
+  button.ghost { background:transparent; border-color:var(--line); color:var(--dim); }
+  button.bad { background:#7f1d1d; border-color:#7f1d1d; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .tag { padding:1px 8px; border-radius:99px; font-size:12px; background:#132033; color:var(--acc); }
+  .tag.ok { color:var(--ok); } .tag.bad { color:var(--bad); } .tag.warn { color:var(--warn); }
+  #gate { max-width:420px; margin:12vh auto; text-align:center; }
+  #err { color:var(--bad); font-size:12px; min-height:16px; margin-top:6px; }
+  .muted { color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+
+<!-- 登录闸门 -->
+<div id="gate" class="card">
+  <h1>CFMC-Edge 管理面板</h1>
+  <p class="sub">输入 ADMIN_TOKEN (wrangler secret put ADMIN_TOKEN)</p>
+  <input id="token" type="password" placeholder="ADMIN_TOKEN" style="width:100%">
+  <button style="width:100%;margin-top:10px" onclick="login()">进入面板</button>
+  <div id="err"></div>
+</div>
+
+<!-- 主界面 -->
+<div id="app" style="display:none">
+  <h1>CFMC-Edge <span class="tag" id="maint"></span></h1>
+  <p class="sub">Serverless Minecraft · Cloudflare Edge · 数据每 5s 自动刷新</p>
+
+  <div class="grid">
+    <div class="card"><div class="k">在线玩家</div><div class="v" id="st-online">–</div></div>
+    <div class="card"><div class="k">活跃区域</div><div class="v" id="st-regions">–</div></div>
+    <div class="card"><div class="k">运行时长</div><div class="v" id="st-uptime">–</div></div>
+    <div class="card"><div class="k">Tick 溢出累计</div><div class="v" id="st-over">–</div></div>
+  </div>
+
+  <div class="row">
+    <section>
+      <h2>区域状态 (聚合各 RegionDO /status)</h2>
+      <table><thead><tr><th>区域</th><th>TPS</th><th>玩家</th><th>实体</th><th>缓存区块</th><th>tick</th></tr></thead>
+      <tbody id="regions"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody></table>
+    </section>
+    <section>
+      <h2>在线玩家</h2>
+      <table><thead><tr><th>名字</th><th>区域</th><th>进入时间</th><th>操作</th></tr></thead>
+      <tbody id="online"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody></table>
+    </section>
+  </div>
+
+  <div class="row">
+    <section>
+      <h2>全服操作</h2>
+      <div class="bar">
+        <input id="bc-msg" placeholder="全服广播内容…" style="flex:1;min-width:200px">
+        <button onclick="broadcast()">广播</button>
+        <button class="ghost" id="maint-btn" onclick="toggleMaint()">切换维护模式</button>
+        <button class="ghost" onclick="loadAll()">手动刷新</button>
+      </div>
+      <p class="muted" style="margin-top:8px">广播经 WorldManagerDO 扇出到所有活跃区域; 维护模式将拒绝非管理员新连接。</p>
+    </section>
+    <section>
+      <h2>封禁管理 (users.bans)</h2>
+      <div class="bar">
+        <input id="ban-name" placeholder="玩家名" style="width:140px">
+        <input id="ban-reason" placeholder="原因" style="width:160px">
+        <button class="bad" onclick="ban()">封禁</button>
+        <button class="ghost" onclick="unban()">解封</button>
+      </div>
+      <table style="margin-top:10px"><thead><tr><th>名字</th><th>原因</th><th>操作人</th><th>时间</th></tr></thead>
+      <tbody id="bans"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody></table>
+    </section>
+  </div>
+
+  <section>
+    <h2>最近聊天 (ChatDO 历史)</h2>
+    <table><thead><tr><th>时间</th><th>频道</th><th>发送者</th><th>内容</th></tr></thead>
+    <tbody id="chat"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody></table>
+  </section>
+</div>
+
+<script>
+let TOKEN = localStorage.getItem('cfmc_admin_token') ?? '';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': TOKEN, ...(opts.headers ?? {}) },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 403 || res.status === 501) throw new Error(data.message ?? '鉴权失败');
+  return data;
+}
+
+function login() {
+  TOKEN = $('token').value.trim();
+  if (!TOKEN) { $('err').textContent = '请输入 Token'; return; }
+  localStorage.setItem('cfmc_admin_token', TOKEN);
+  $('err').textContent = '';
+  loadAll().then(() => { $('gate').style.display = 'none'; $('app').style.display = 'block'; })
+           .catch((e) => { $('err').textContent = e.message; });
+}
+
+async function loadAll() {
+  try {
+    const [stats, online, bans, chat] = await Promise.all([
+      api('/api/stats'), api('/api/online'), api('/api/admin/bans'), api('/api/chat/history?n=30'),
+    ]);
+
+    $('st-online').textContent = stats.online ?? 0;
+    $('st-regions').textContent = stats.regions ?? 0;
+    $('st-uptime').textContent = fmtDur(stats.uptimeMs ?? 0);
+    $('st-over').textContent = stats.metrics?.tickOverruns ?? 0;
+    $('maint').textContent = stats.maintenance ? '维护中' : '正常运行';
+    $('maint').className = 'tag ' + (stats.maintenance ? 'warn' : 'ok');
+
+    // 区域聚合
+    const ov = await api('/api/admin/overview');
+    $('regions').innerHTML = (ov.regions ?? []).map((r) =>
+      `<tr><td>${esc(r.region)}</td><td>${r.tps ?? '-'}</td><td>${r.players?.length ?? 0}</td><td>${r.entities?.total ?? 0}</td><td>${r.cachedChunks ?? '-'}</td><td>${r.tickCount ?? '-'}</td></tr>`
+    ).join('') || '<tr><td colspan="6" class="muted">暂无活跃区域</td></tr>';
+
+    // 在线列表
+    $('online').innerHTML = (online.online ?? []).map((o) =>
+      `<tr><td>${esc(o.name)}</td><td>${esc(o.region)}</td><td>${new Date(o.joinedAt).toLocaleTimeString()}</td>` +
+      `<td><button class="bad" onclick="kick('${esc(o.uuid)}')">踢出</button></td></tr>`
+    ).join('') || '<tr><td colspan="4" class="muted">无人在线</td></tr>';
+
+    // 封禁列表
+    $('bans').innerHTML = (bans.bans ?? []).map((b) =>
+      `<tr><td>${esc(b.name)}</td><td>${esc(b.reason)}</td><td>${esc(b.by_name)}</td><td>${new Date(b.created_at).toLocaleString()}</td></tr>`
+    ).join('') || '<tr><td colspan="4" class="muted">无封禁记录</td></tr>';
+
+    // 聊天历史
+    $('chat').innerHTML = (chat.history ?? []).slice().reverse().map((c) =>
+      `<tr><td>${new Date(c.at).toLocaleTimeString()}</td><td>${esc(c.channel)}</td><td>${esc(c.from)}</td><td>${esc(c.msg)}</td></tr>`
+    ).join('') || '<tr><td colspan="4" class="muted">暂无聊天</td></tr>';
+  } catch (e) {
+    if (String(e.message).includes('鉴权')) { location.reload(); }
+  }
+}
+
+async function broadcast() {
+  const msg = $('bc-msg').value.trim();
+  if (!msg) return;
+  await api('/api/admin/broadcast', { method: 'POST', body: JSON.stringify({ message: msg }) });
+  $('bc-msg').value = '';
+}
+async function kick(uuid) {
+  if (!confirm('确认踢出该玩家?')) return;
+  await api('/api/admin/kick', { method: 'POST', body: JSON.stringify({ uuid, reason: '面板踢出' }) });
+  loadAll();
+}
+async function ban() {
+  const name = $('ban-name').value.trim();
+  if (!name) return;
+  await api('/api/admin/ban', { method: 'POST', body: JSON.stringify({ name, reason: $('ban-reason').value }) });
+  $('ban-name').value = ''; $('ban-reason').value = '';
+  loadAll();
+}
+async function unban() {
+  const name = $('ban-name').value.trim();
+  if (!name) return;
+  await api('/api/admin/ban', { method: 'DELETE', body: JSON.stringify({ name }) });
+  loadAll();
+}
+async function toggleMaint() {
+  const cur = $('maint').textContent === '维护中';
+  await api('/api/admin/maintenance', { method: 'POST', body: JSON.stringify({ enabled: !cur }) });
+  loadAll();
+}
+function fmtDur(ms) {
+  const s = Math.floor(ms / 1000);
+  if (s < 3600) return `${Math.floor(s / 60)}m${s % 60}s`;
+  return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m`;
+}
+
+// 自动恢复会话 + 定时刷新
+if (TOKEN) {
+  loadAll().then(() => { $('gate').style.display = 'none'; $('app').style.display = 'block'; });
+}
+setInterval(() => { if (TOKEN && $('app').style.display !== 'none') loadAll().catch(() => {}); }, 5000);
+</script>
+</body>
+</html>

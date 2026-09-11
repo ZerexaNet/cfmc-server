@@ -3,7 +3,7 @@
 > Cloudflare Minecraft Edge Server — 在 Cloudflare 全球边缘网络上运行的纯 Serverless Minecraft 服务器。
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![Phase](https://img.shields.io/badge/Phase-2__core-green)](#开发路线图)
+[![Phase](https://img.shields.io/badge/Phase-3__core-green)](#开发路线图)
 [![Protocol](https://img.shields.io/badge/Protocol-v1-green)](src/protocol/packet-definitions.js)
 
 配套客户端 Mod: [cfmc-client](https://github.com/ZerexaNet/cfmc-client) (Fabric/NeoForge)
@@ -129,15 +129,23 @@ cfmc-server/
 │   ├── workers/
 │   │   ├── gateway.js               # 中间件: CORS / Logger / RateLimiter
 │   │   ├── auth.js                  # Auth Worker: 四种认证模式 + 双Token
-│   │   └── game.js                  # WS会话管理: JWT验证 + Region路由
+│   │   ├── game.js                  # WS会话管理: JWT验证 + 封禁/维护拦截 + WM路由
+│   │   └── api.js                   # REST API (Phase 3): 统计/在线/封禁/广播
+│   ├── admin/
+│   │   └── panel.html               # Web 管理面板 (单文件 SPA, GET /admin)
+│   ├── world/                       # 纯逻辑游戏模块 (零平台依赖, 可单测)
+│   │   ├── permissions.js           # P3 权限: 角色继承 + 权限节点
+│   │   ├── anticheat.js             # P3 反作弊: 速度/飞行 + 回拉校正
+│   │   ├── commands.js              # P3 管理命令路由
+│   │   ├── inventory.js             # P3 背包: 41槽 + 点击交换模型
+│   │   ├── entities.js              # P4 怪物 AI: 僵尸/猪 + 生成器
+│   │   ├── claims.js                # P4 土地保护: 区块认领
+│   │   ├── economy.js               # P4 经济: 转账校验
+│   │   └── hook-bus.js              # P4 插件事件总线
 │   ├── durable-objects/
-│   │   ├── WorldManagerDO.js        # 世界协调者 (单例): 路由表 [存根→Phase 2]
-│   │   ├── RegionDO.js              # 区域游戏引擎 v0.1 (核心!)
-│   │   │   • Alarm驱动20TPS Tick循环 (40ms CPU熔断)
-│   │   │   • Hibernation WS池 + 心跳检测
-│   │   │   • 区块LRU缓存 / 超平坦生成 / 调色板方块读写
-│   │   │   • 每100tick D1.batch原子持久化 + 审计日志
-│   │   └── ChatDO.js                # 全服聊天 [简单广播可用]
+│   │   ├── WorldManagerDO.js        # 世界协调者 v1.0: 路由表/封禁/维护/告警/广播
+│   │   ├── RegionDO.js              # 区域游戏引擎 v1.0 (Phase 2/3/4 全能力)
+│   │   └── ChatDO.js                # 全服聊天 v1.0: 频道/限流/过滤/历史
 │   ├── protocol/
 │   │   ├── packet-definitions.js    # 包ID注册表 + 帧格式 + Flags位域
 │   │   ├── packet-reader.js         # 二进制解码器 (VarInt/VarLong/BE标量)
@@ -234,24 +242,36 @@ RegionDO (版本无关) ── 存储层以方块名字符串为主键, 线上�
 - [x] D1 双库 Schema（Cesium 地图格式 + 账号库）
 - [x] `init-d1.sh` 初始化脚本（建库/建表/回填配置）
 
-### 🔜 Phase 2 核心功能（当前进行中）
+### ✅ Phase 2 核心功能（已完成）
 
 - [x] Auth Worker：四种认证模式 + JWT 双Token（**已完成**）
 - [x] RegionDO v0.1：Alarm 驱动 20TPS Tick 循环 + 内存优先 + 批量持久化（**已完成**）
 - [x] 二进制协议编解码：VarInt / 帧 / 调色板 LongArray（**已完成，含单测**）
 - [x] Cesium 格式区块加载/保存 + 超平坦生成（**已完成**）
 - [x] 全协议支持 v2：版本注册表 + 适配器 + 方块名版本中立化（**已完成**，1.8~1.21.8）
-- [ ] 3D 世界可见、移动同步、方块放置/破坏、基础物理（客户端侧）
-- [ ] 客户端预测 + 服务端校正
-- [ ] Anvil 世界导入工具（cesium-migrator）
+- [x] WorldManagerDO v1.0：玩家路由表（DO Storage 持久化）/ 在线注册表 / 断线重连路由
+- [x] 视距环区块流式下发（每 tick 限额防 D1 风暴）+ 服务端权威位置 0x21（TP/回拉/重生）
+- [x] Anvil 世界导入：`scripts/anvil-migrator.mjs` + `npm run import:anvil`
 
-### 🡒 Phase 3 生产化（Week 7-10）
+### ✅ Phase 3 生产化（已完成）
 
-权限系统 / 反作弊 / 管理命令 / 背包同步 / 断线重连 / Web 管理面板 / 监控告警
+- [x] 权限系统：player/moderator/admin 角色继承 + 权限节点（`src/world/permissions.js`）
+- [x] 基础反作弊：速度/飞行/垂直检测 → 服务端回拉校正 + 传送宽限
+- [x] 管理命令：`/tp /gamemode /kick /ban /op /say /save /tps /list /help`
+- [x] 聊天系统：私聊 `@玩家名` / 敏感词过滤 / 滑动窗口限流 / D1 历史审计
+- [x] 背包同步：41 槽（36+装备+副手）WindowItems/SetSlot + 点击交换 + 持久化
+- [x] 断线重连：内存快照 60s 宽限 → player_data 兜底，位置/背包/金币/角色完整恢复
+- [x] Web 管理面板：`GET /admin` 零构建单文件 SPA + `/api/*`（统计/在线/封禁/广播/维护）
+- [x] 监控告警：tick 溢出上报 + `ALERT_WEBHOOK_URL` 节流转发
 
-### 🡒 Phase 4 功能扩展（Week 11+）
+### ✅ Phase 4 功能扩展（首批已完成）
 
-怪物 AI / 红石 / 经济系统 / 多维度 / Workers AI NPC / 插件 API
+- [x] 怪物 AI：夜晚僵尸追击/攻击 + 猪（EntitySpawn/Move/Destroy 战斗闭环）
+- [x] 土地保护：`/claim` 区块认领 + 挖放校验（admin/mod 豁免）
+- [x] 经济系统：金币 `/pay /balance /grant` + 击杀奖励（服务端权威）
+- [x] 多维度路由：`region:[dim:]x,z` 实例命名 + `dim` 参数
+- [x] 插件事件总线：`HookBus`（监听器异常隔离）+ 示例插件
+- [ ] 红石 / AI NPC / Discord 桥接（预留扩展点：HookBus + Queue + ChatDO 直连）
 
 ## 性能基准目标
 
