@@ -35,7 +35,7 @@ export async function handleGameWebSocket(request, env) {
 
   const authHeader = request.headers.get('Authorization');
   if (authHeader?.startsWith('Bearer ')) {
-    const payload = await verifyJWT(authHeader.slice(7), getSecret(env));
+    const payload = await verifyJWT(authHeader.slice(7), await getSecret(env));
     if (!payload) {
       return errorClose(ERROR_CODES.AUTH_INVALID_TOKEN, 'AccessToken 无效或已过期');
     }

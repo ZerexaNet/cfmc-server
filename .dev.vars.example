@@ -1,0 +1,21 @@
+# ============================================================
+# CFMC-Edge — Secrets 清单模板
+# ------------------------------------------------------------
+# · Deploy to Cloudflare 按钮部署: 向导会逐项提示输入下列"未注释"
+#   的条目, 输入值自动成为 Worker Secret — 无需任何命令行操作。
+# · 本地开发 (wrangler dev): 复制本文件为 .dev.vars 并填入真实值
+#   (.dev.vars 已被 .gitignore 忽略, 不会进 git)。
+# · 手动部署: openssl rand -hex 32 | npx wrangler secret put <名称>
+# ============================================================
+
+# JWT 签名密钥 (必需) — 签发/校验玩家登录会话, 泄露 = 任何人可伪造登录
+# 推荐生成方式: openssl rand -hex 32
+AUTH_JWT_SECRET=
+
+# 管理面板/管理 API 令牌 (必需) — /admin 面板与 /api/admin/* 的鉴权口令
+# 推荐生成方式: openssl rand -hex 32
+ADMIN_TOKEN=
+
+# 监控告警 webhook (可选) — Discord/飞书 Incoming Webhook 等地址
+# 需要时取消注释并填入:
+#ALERT_WEBHOOK_URL=

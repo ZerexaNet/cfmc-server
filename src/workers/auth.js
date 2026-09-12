@@ -78,7 +78,7 @@ export async function handleAuthRequest(request, env, url) {
   // ---------- POST /auth/validate ----------
   if (path === '/auth/validate' && method === 'POST') {
     const body = await request.json().catch(() => ({}));
-    const payload = await verifyJWT(body.accessToken ?? '', getSecret(env));
+    const payload = await verifyJWT(body.accessToken ?? '', await getSecret(env));
     if (!payload) return err(ERROR_CODES.AUTH_INVALID_TOKEN, 'AccessToken 无效或已过期', 401);
     return json({ ok: true, profile: { uuid: payload.uuid, name: payload.name, mode: payload.mode } });
   }
@@ -141,7 +141,7 @@ async function handleLogin(body, env, request) {
   }
 
   // ---------- 签发双 Token ----------
-  const secret = getSecret(env);
+  const secret = await getSecret(env);
   const accessToken = await signJWT(
     { uuid: result.profile.uuid, name: result.profile.name, mode: result.profile.mode },
     secret,
@@ -273,7 +273,7 @@ async function handleRefresh(body, env) {
   // 轮换 (rotation): 旧 refresh 立即作废, 发新的 — 检测重放攻击的基础
   await env.CACHE.delete(`rt:${token}`);
 
-  const secret = getSecret(env);
+  const secret = await getSecret(env);
   const newAccess = await signJWT(
     { uuid: session.uuid, name: session.name, mode: 'refresh' },
     secret,

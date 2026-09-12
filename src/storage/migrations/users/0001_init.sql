@@ -1,6 +1,7 @@
 -- =============================================================
--- CFMC-Edge Users Database Schema
--- 应用到: wrangler d1 execute cfmc-users --file=src/storage/users-schema.sql
+-- CFMC-Edge Users Database Schema (wrangler 标准迁移 0001)
+-- 应用: wrangler d1 migrations apply USERS_DB --remote
+--       (npm run deploy 会自动执行; 语句全幂等, 可安全重跑)
 -- -------------------------------------------------------------
 -- 与 world 库分离的原因 (设计决策):
 --   1. 备份节奏不同: 玩家数据要频繁备份且绝不能回滚; 世界数据按天备份

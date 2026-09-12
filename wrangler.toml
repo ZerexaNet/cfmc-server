@@ -1,12 +1,19 @@
 # ============================================================
 # CFMC-Edge — Cloudflare 配置文件 (wrangler v4)
 #
+# 两种部署路径:
+#   A. 一键部署 (推荐): 点击 README 顶部的 Deploy to Cloudflare 按钮 —
+#      平台读取本文件自动创建并绑定 KV/D1 资源, 占位符 ID 无需手动替换;
+#      Secrets 按提示输入 (清单见 .dev.vars.example)
+#   B. 手动部署: `bash scripts/init-d1.sh` 建库回填 ID → `npm run deploy`
+#      (deploy 脚本会先自动应用 migrations/ 下的 D1 建表迁移)
+#
 # 设计说明:
-# - 本文件与《cfmc.md 主提示词》中的模板保持一致, 包含全部绑定
-# - <YOUR_XXX_ID> 为占位符: 运行 `bash scripts/init-d1.sh` 后,
-#   脚本会输出真实的 D1 database_id, 手动替换即可 (远端部署必需)
-# - 本地开发 (wrangler dev) 不需要真实 ID: D1/KV/R2 均由
-#   miniflare 在本地模拟, 占位符不影响本地运行
+#   - 本地开发 (wrangler dev) 不需要真实 ID: D1/KV 均由 miniflare 本地模拟,
+#     占位符不影响本地运行
+#   - R2 与 Queue 默认注释: R2 需在 Dashboard 开通一次 (免费, 但账号需绑定
+#     支付方式), Queue 需 Workers Paid 计划 — 二者当前代码尚未消费 (预留
+#     绑定), 注释掉不影响任何功能; 需要时取消注释并重新部署 (见 DEPLOYMENT.md 3.5)
 # ============================================================
 
 name = "cfmc-edge"
@@ -50,17 +57,20 @@ new_sqlite_classes = ["WorldManagerDO", "RegionDO", "ChatDO"]
 # 为什么地图数据放 D1 而不是 DO 内置 Storage:
 #   - D1 支持 SQL 查询 (跨区域统计/反作弊审计/世界导出)
 #   - DO Storage 适合小体量 KV, 大体量区块数据用 D1 更经济
-# TODO(Phase 2): 如果 D1 单区块读写延迟不达标, 可降级为 DO 内置 SQLite
+# migrations_dir: wrangler 标准迁移目录, `npm run deploy` 自动按序应用
+#   (0001_init.sql 全幂等, 对已建表的老库重跑无副作用)
 # ============================================================
 [[d1_databases]]
 binding = "USERS_DB"
 database_name = "cfmc-users"
-database_id = "<YOUR_USERS_DB_ID>"      # init-d1.sh 运行后替换
+database_id = "<YOUR_USERS_DB_ID>"      # 一键部署自动供给; 手动部署由 init-d1.sh 回填
+migrations_dir = "src/storage/migrations/users"
 
 [[d1_databases]]
 binding = "WORLD_DB"
 database_name = "cfmc-world"
-database_id = "<YOUR_WORLD_DB_ID>"      # init-d1.sh 运行后替换
+database_id = "<YOUR_WORLD_DB_ID>"      # 同上
+migrations_dir = "src/storage/migrations/world"
 
 # ============================================================
 # KV 命名空间 (最终一致, 读多写少场景)
@@ -68,26 +78,30 @@ database_id = "<YOUR_WORLD_DB_ID>"      # init-d1.sh 运行后替换
 # ============================================================
 [[kv_namespaces]]
 binding = "CACHE"
-id = "<YOUR_KV_NAMESPACE_ID>"           # wrangler kv namespace create CACHE 后替换
+id = "<YOUR_KV_NAMESPACE_ID>"           # 一键部署自动供给; 手动部署: wrangler kv namespace create CACHE 后替换
 
 # ============================================================
-# R2 存储桶 (S3 兼容对象存储)
+# R2 存储桶 (S3 兼容对象存储) — 可选, 默认关闭
+# ------------------------------------------------------------
 # 用途: 世界备份归档 / 大文件 (启动画面/资源包) 托管
+# 启用步骤: Dashboard → R2 页面开通 (免费, 需绑定支付方式) →
+#           取消下面注释 → 重新部署 (或 `npx wrangler r2 bucket create cfmc-backups` 手动建桶)
 # ============================================================
-[[r2_buckets]]
-binding = "BACKUPS"
-bucket_name = "cfmc-backups"
+# [[r2_buckets]]
+# binding = "BACKUPS"
+# bucket_name = "cfmc-backups"
 
 # ============================================================
-# Queue (异步任务队列)
+# Queue (异步任务队列) — 可选, 默认关闭 (需 Workers Paid 计划)
+# ------------------------------------------------------------
 # 用途: 削峰 —— 把非实时任务 (统计上报/Discord桥接/批量备份) 从
 #       Tick 循环剥离, 避免 DO CPU 超时
-# 注意: 若本地 wrangler dev 对 producer-only 配置报错, 可先注释此段
+# 启用步骤: 升级 Workers Paid → 取消下面注释 → 重新部署
 # ============================================================
-[[queues]]
-queue = "EVENTS_QUEUE"
-max_batch_size = 100
-max_batch_timeout = 30
+# [[queues]]
+# queue = "EVENTS_QUEUE"
+# max_batch_size = 100
+# max_batch_timeout = 30
 
 # ============================================================
 # 环境变量 (与 [vars] 同名, RegionDO/Auth Worker 内通过 env.XXX 读取)
@@ -108,7 +122,7 @@ MAX_ENTITIES_PER_REGION = "12"          # 单区域实体上限 (怪物 AI)
 CHAT_RATE_LIMIT = "5"                   # 聊天限流: 条数/窗口
 CHAT_RATE_WINDOW_MS = "5000"            # 聊天限流窗口
 CHAT_HISTORY_SIZE = "100"               # 聊天历史保留条数
-# Secrets (wrangler secret put, 不写在本文件):
+# Secrets (wrangler secret put, 不写在本文件; 一键部署时按 .dev.vars.example 提示输入):
 #   AUTH_JWT_SECRET     — JWT 签名密钥 (认证, 必需)
 #   ADMIN_TOKEN         — Web 面板/管理 API 令牌 (Phase 3, 必需)
 #   ALERT_WEBHOOK_URL   — 告警 webhook (如 Discord/飞书, 可选)

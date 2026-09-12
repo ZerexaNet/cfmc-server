@@ -14,13 +14,24 @@
   },
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "npm run db:migrate && wrangler deploy",
+    "db:migrate": "wrangler d1 migrations apply USERS_DB --remote && wrangler d1 migrations apply WORLD_DB --remote",
+    "db:migrate:local": "wrangler d1 migrations apply USERS_DB --local && wrangler d1 migrations apply WORLD_DB --local",
     "init:d1": "bash scripts/init-d1.sh",
     "init:d1:local": "bash scripts/init-d1.sh --local",
-    "migrate:d1": "npx wrangler d1 execute cfmc-users --remote --file=src/storage/migrations/002-phase3-p4.sql -y",
     "import:anvil": "bash scripts/import-world.sh",
     "tail": "wrangler tail --format pretty",
     "test": "vitest run"
+  },
+  "cloudflare": {
+    "bindings": {
+      "AUTH_JWT_SECRET": {
+        "description": "JWT 签名密钥 (保护玩家登录会话)。生成强随机值: `openssl rand -hex 32`"
+      },
+      "ADMIN_TOKEN": {
+        "description": "Web 管理面板 (`/admin`) 与管理 API (`/api/admin/*`) 的访问令牌。生成强随机值: `openssl rand -hex 32`"
+      }
+    }
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240620.0",
@@ -31,6 +42,8 @@
   },
   "comments": {
     "零依赖设计": "运行时 dependencies 为空——Workers 冷启动时间与包体积正相关, 所有功能(路由/中间件/协议编解码)均手写实现, 不引入第三方运行时依赖",
-    "wrangler": "仅作为开发/部署工具链 (devDependency), 不会打包进 Worker"
+    "wrangler": "仅作为开发/部署工具链 (devDependency), 不会打包进 Worker",
+    "deploy脚本": "deploy 先按 wrangler 标准迁移应用 D1 建表 (引用绑定名, 与库实际名称解耦 — Deploy to Cloudflare 按钮部署时用户可自定义库名) 再 wrangler deploy",
+    "cloudflare字段": "Deploy to Cloudflare 按钮向导会读取 cloudflare.bindings 描述, 向部署者解释每个 Secret 的用途与填法"
   }
 }

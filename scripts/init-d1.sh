@@ -5,11 +5,15 @@
 # 功能:
 #   1. 创建两个 D1 数据库: cfmc-users (账号) + cfmc-world (地图存档)
 #   2. 从 wrangler 输出中提取 database_id, 自动替换 wrangler.toml 占位符
-#   3. 应用表结构 (users-schema.sql / cesium-schema.sql)
+#   3. 应用 wrangler 标准迁移 (migrations/{users,world}/0001_init.sql,
+#      与 Deploy to Cloudflare 按钮部署 / npm run deploy 共用同一套迁移源)
 #
 # 用法:
-#   bash scripts/init-d1.sh            # 创建远端库 + 建表 (正式部署用)
+#   bash scripts/init-d1.sh            # 创建远端库 + 回填 + 迁移 (手动部署用)
 #   bash scripts/init-d1.sh --local    # 仅本地模拟库建表 (wrangler dev 用, 无需账号)
+#
+# 注: 一键部署 (Deploy to Cloudflare 按钮) 无需本脚本 —— 资源自动供给,
+#     建表由 deploy 脚本里的 d1 migrations apply 自动完成
 #
 # 依赖: npm i -g wrangler 或 npx wrangler; 远端模式需已 `wrangler login`
 # ============================================================================
@@ -82,19 +86,19 @@ patch_toml() {
 }
 
 # ---------------------------------------------------------------------------
-# 步骤 3: 建表
+# 步骤 3: 应用 wrangler 标准迁移 (以绑定名引用, 与库实际名称解耦)
+# 0001_init.sql 全部 CREATE TABLE IF NOT EXISTS / INSERT OR IGNORE, 幂等可重跑
 # ---------------------------------------------------------------------------
-apply_schema() {
-  local db_name="$1" sql_file="$2"
-  [[ -f "$sql_file" ]] || die "SQL 文件不存在: ${sql_file}"
+apply_migrations() {
+  local binding="$1"
 
-  log "应用表结构: ${db_name} ← ${sql_file}"
+  log "应用迁移: ${binding} ..."
   if [[ "$MODE" == "local" ]]; then
-    $WRANGLER d1 execute "$db_name" --local --file="$sql_file" || die "本地建表失败: ${db_name}"
+    $WRANGLER d1 migrations apply "$binding" --local || die "本地迁移失败: ${binding}"
   else
-    $WRANGLER d1 execute "$db_name" --remote --file="$sql_file" -y || die "远端建表失败: ${db_name}"
+    $WRANGLER d1 migrations apply "$binding" --remote || die "远端迁移失败: ${binding}"
   fi
-  ok "建表完成: ${db_name}"
+  ok "迁移应用完成: ${binding}"
 }
 
 # ============================================================================
@@ -108,8 +112,8 @@ WORLD_ID=$(create_db "cfmc-world")
 patch_toml "<YOUR_USERS_DB_ID>" "$USERS_ID"
 patch_toml "<YOUR_WORLD_DB_ID>" "$WORLD_ID"
 
-apply_schema "cfmc-users" "${ROOT_DIR}/src/storage/users-schema.sql"
-apply_schema "cfmc-world" "${ROOT_DIR}/src/storage/cesium-schema.sql"
+apply_migrations USERS_DB
+apply_migrations WORLD_DB
 
 echo ""
 ok "=========================================="
@@ -119,6 +123,8 @@ ok "   world 库 id: ${WORLD_ID}"
 ok "=========================================="
 echo ""
 log "下一步:"
-log "  KV:        npx wrangler kv namespace create CACHE   → 替换 <YOUR_KV_NAMESPACE_ID>"
+log "  Secrets:   openssl rand -hex 32 | npx wrangler secret put AUTH_JWT_SECRET"
+log "             openssl rand -hex 32 | npx wrangler secret put ADMIN_TOKEN"
+log "  R2/Queue:  可选预留能力, 默认已在 wrangler.toml 注释 (见 3.5 说明)"
 log "  本地开发:  npm run dev   (无需真实 id, miniflare 自动模拟)"
-log "  远端部署:  npm run deploy (需先 wrangler login 且 id 已替换)"
+log "  远端部署:  npm run deploy (迁移已应用过, 会自动跳过)"

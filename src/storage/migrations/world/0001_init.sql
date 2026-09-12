@@ -1,6 +1,7 @@
 -- =============================================================
--- CFMC-Edge World Database (Cesium-Compatible Schema)
--- 应用到: wrangler d1 execute cfmc-world --file=src/storage/cesium-schema.sql
+-- CFMC-Edge World Database — Cesium-Compatible Schema (wrangler 标准迁移 0001)
+-- 应用: wrangler d1 migrations apply WORLD_DB --remote
+--       (npm run deploy 会自动执行; 语句全幂等, 可安全重跑)
 -- -------------------------------------------------------------
 -- 基于 Cesium-Fabric 项目的设计思路: 用 SQLite(D1) 替代传统 Anvil .mca
 --

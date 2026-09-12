@@ -6,6 +6,8 @@
 [![Phase](https://img.shields.io/badge/Phase-3__core-green)](#开发路线图)
 [![Protocol](https://img.shields.io/badge/Protocol-v1-green)](src/protocol/packet-definitions.js)
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ZerexaNet/cfmc-server)
+
 配套客户端 Mod: [cfmc-client](https://github.com/ZerexaNet/cfmc-client) (Fabric/NeoForge)
 
 > **部署指南**: [DEPLOYMENT.md](DEPLOYMENT.md) —— 从零到上线的完整手册（资源初始化、Secrets、运维、故障排查）
@@ -59,6 +61,24 @@ CFMC-Edge 使用 **Durable Objects 作为区域游戏引擎**、**D1 (类 Cesium
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## 🚀 一键部署（推荐）
+
+**不需要命令行**：点击上方按钮（或下方链接）→ 登录 Cloudflare → 确认向导，全流程 3 步：
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ZerexaNet/cfmc-server)
+
+| 步骤 | 会发生什么 |
+|------|-----------|
+| ① 点击按钮 | Cloudflare 把本仓库克隆到你自己的 GitHub 账号下 |
+| ② 确认向导 | 平台读取 `wrangler.toml`，自动创建并绑定 KV / 2×D1 / 3 类 Durable Objects；按提示输入两个 Secret（`AUTH_JWT_SECRET` 与 `ADMIN_TOKEN`，推荐 `openssl rand -hex 32` 生成的随机值） |
+| ③ 等待构建 | 走 Workers Builds 自动构建部署，D1 建表迁移随部署自动执行（清单见 [.dev.vars.example](.dev.vars.example)） |
+
+完成后向导会给出 `https://cfmc-edge.<你的子域>.workers.dev` 地址，客户端 Mod 填 `wss://<该地址>/ws/game` 即可进服。
+
+> - **R2 与 Queue 默认未启用**（免费账号开箱即用；二者为预留能力，当前代码未消费），启用方法见 [DEPLOYMENT.md](DEPLOYMENT.md) 3.5；
+> - 一键部署会把仓库克隆到你的 GitHub 账号，之后修改代码 push 即自动重新部署（CI/CD）；
+> - 想用 CLI 手动部署、绑定自定义域名、运维备份，见 **[DEPLOYMENT.md](DEPLOYMENT.md)**。
+
 ## 快速开始
 
 ### 前置要求
@@ -72,17 +92,19 @@ CFMC-Edge 使用 **Durable Objects 作为区域游戏引擎**、**D1 (类 Cesium
 npm install
 ```
 
-### 2. 初始化数据库（本地开发可跳过）
+### 2. 初始化数据库（一键部署可跳过；本地开发用本地模式）
 
 ```bash
 # 方式 A: 本地模式 (miniflare 模拟库, 无需 Cloudflare 账号)
 npm run init:d1:local
 
-# 方式 B: 远端模式 (创建真实 D1 库并自动回填 wrangler.toml)
+# 方式 B: 远端模式 (创建真实 D1 库并自动回填 wrangler.toml, 随后按迁移建表)
 npm run init:d1
 # 然后手动补 KV:
 npx wrangler kv namespace create CACHE   # 把输出的 id 填入 wrangler.toml
 ```
+
+> 一键部署用户无需此步：资源由部署平台自动供给，建表由 `npm run deploy` 自动完成。
 
 ### 3. 启动本地开发
 
@@ -115,7 +137,7 @@ ws.onopen = () => ws.send(JSON.stringify({ type: "chat", msg: "hello" }));
 
 ```bash
 wrangler login
-npm run deploy
+npm run deploy   # 自动先应用 D1 建表迁移, 再 wrangler deploy
 ```
 
 > 上线完整流程（KV/R2/Queue 初始化、Secrets 配置、域名绑定、运维与回滚）见 **[DEPLOYMENT.md](DEPLOYMENT.md)**。
@@ -152,8 +174,10 @@ cfmc-server/
 │   │   ├── packet-writer.js         # 二进制编码器 + 帧封装 + 多包合并
 │   │   └── compression.js           # deflate-raw (Java nowrap 兼容)
 │   ├── storage/
-│   │   ├── cesium-schema.sql        # 地图库 DDL (Cesium格式)
-│   │   ├── users-schema.sql         # 账号库 DDL
+│   │   ├── migrations/
+│   │   │   ├── users/0001_init.sql  # 账号库迁移 (wrangler 标准, 幂等)
+│   │   │   ├── world/0001_init.sql  # 地图库迁移 (Cesium 格式)
+│   │   │   └── 002-phase3-p4.sql    # [legacy] Phase3/4 增量 (老库升级用)
 │   │   ├── cesium-reader.js         # 区块加载 + LongArray解码
 │   │   └── cesium-writer.js         # 脏区块UPSERT/变更日志/玩家存档
 │   ├── auth/
@@ -174,6 +198,7 @@ cfmc-server/
 │       ├── protocol.test.js         # VarInt/帧/LongArray往返
 │       └── auth.test.js             # MD5向量/离线UUID/JWT
 ├── wrangler.toml                    # Cloudflare 配置 (全部绑定)
+├── .dev.vars.example                # Secrets 模板 (一键部署向导/本地开发)
 ├── vitest.config.mts
 ├── package.json
 └── README.md

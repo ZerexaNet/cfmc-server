@@ -8,8 +8,10 @@
  *     本地 verify 即可, 不查库 (每次WS握手都验证, 查库会烧 D1 配额)
  *   - RefreshToken: 不透明随机串 (前缀 + UUIDv4), 存 KV (7 天), 可吊销
  *     → 双 Token 结构, 与 OAuth2 惯例一致
- *   - 密钥来源: env.AUTH_JWT_SECRET (wrangler secret put AUTH_JWT_SECRET)
- *     ⚠️ 未配置时回退到 dev 密钥并打警告 —— 仅限本地开发, 部署必须配置!
+ *   - 密钥来源: env.AUTH_JWT_SECRET (wrangler secret put AUTH_JWT_SECRET,
+ *     一键部署时由向导提示输入, 模板见 .dev.vars.example)
+ *     ⚠️ 未配置时回退到 KV 自动生成的随机密钥 (每部署唯一, 重启不失效);
+ *        KV 不可用时才退到 dev 密钥 —— 仅限本地开发, 生产必须显式配置!
  *
  * 与原版 Minecraft 认证的差异:
  *   原版是"一次性会话验证" (session join → hasJoined); 我们在这之上
@@ -35,14 +37,37 @@ function b64urlDecode(str) {
 
 const DEV_FALLBACK_SECRET = 'cfmc-dev-insecure-secret-change-me';
 
-/** 从环境取密钥 (带 dev 警告) */
-export function getSecret(env) {
+/**
+ * 从环境取签名密钥 (async: 允许 KV 兑底路径)
+ *
+ * 为什么不直接用固定 dev 密钥: 固定串是公开已知的 —— 忘配 Secret 的部署
+ * 等于"任何人可伪造任意玩家会话"。改为首次缺失时生成 64hex 随机值并
+ * 持久化到 KV (key: jwt_secret_auto), 既保证每个部署唯一, 又保证重启/
+ * 冷启动后签名密钥稳定 (已签发的 Token 不会批量失效)。
+ * 显式配置 Secret 后优先级更高, KV 值自然废弃。
+ */
+export async function getSecret(env) {
   const s = env?.AUTH_JWT_SECRET;
-  if (!s) {
-    console.warn(JSON.stringify({ level: 'warn', msg: 'AUTH_JWT_SECRET 未配置, 使用不安全 dev 密钥 (严禁生产!)' }));
-    return DEV_FALLBACK_SECRET;
-  }
-  return s;
+  if (s) return s;
+
+  try {
+    if (env?.CACHE) {
+      let key = await env.CACHE.get('jwt_secret_auto');
+      if (!key) {
+        const bytes = crypto.getRandomValues(new Uint8Array(32));
+        key = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+        await env.CACHE.put('jwt_secret_auto', key);
+      }
+      console.warn(JSON.stringify({
+        level: 'warn',
+        msg: 'AUTH_JWT_SECRET 未配置, 使用 KV 自动生成密钥 (每次部署唯一; 生产请 wrangler secret put AUTH_JWT_SECRET)',
+      }));
+      return key;
+    }
+  } catch { /* KV 故障则继续走 dev 密钥 */ }
+
+  console.warn(JSON.stringify({ level: 'warn', msg: 'AUTH_JWT_SECRET 未配置且 KV 不可用, 使用不安全 dev 密钥 (严禁生产!)' }));
+  return DEV_FALLBACK_SECRET;
 }
 
 /** 派生 HMAC 密钥 (Workers 每请求环境隔离, Key 无法跨请求缓存; 短Token下开销可忽略) */

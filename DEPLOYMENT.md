@@ -44,7 +44,7 @@ Auth Worker      Durable Objects 层 (按需创建, 无人自动休眠)
 | `POST /auth/refresh` | POST | 刷新 Access Token |
 | `POST /auth/validate` | POST | 校验 Token 有效性 |
 | `POST /auth/invalidate` | POST | 吊销 Token（登出） |
-| `ANY /api/*` | — | REST API（Phase 3 实现，当前返回 501） |
+| `ANY /api/*` | — | REST API：统计/在线/聊天历史 + 管理（封禁/广播/维护，需 X-Admin-Token） |
 
 ## 1. 前置要求
 
@@ -77,7 +77,34 @@ Auth Worker      Durable Objects 层 (按需创建, 无人自动休眠)
 - **不需要 Docker / 常驻进程**：Worker 按请求冷启动，DO 按需拉起；
 - **不需要提前建库**：第 3.3 节的脚本一条命令完成建库建表。
 
-## 2. 快速部署（五分钟版）
+## 2. 快速部署
+
+### 2.1 方式 A：一键部署（推荐，零命令行）
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ZerexaNet/cfmc-server)
+
+点击按钮后，Cloudflare 会完成三件事：**克隆仓库到你的 GitHub 账号** → **自动供给并绑定资源**（2×D1、KV、3 类 Durable Objects，平台读取本仓库 `wrangler.toml`）→ **Workers Builds 构建部署**（`deploy` 脚本会自动应用 D1 建表迁移）。
+
+向导中需要你做的只有两件事：
+
+1. **输入 Secrets**（清单见 [.dev.vars.example](.dev.vars.example)，向导逐项提示）：
+   - `AUTH_JWT_SECRET`：JWT 签名密钥，填 `openssl rand -hex 32` 的输出（或任意强随机串）；
+   - `ADMIN_TOKEN`：管理面板/管理 API 令牌，同样填强随机值。
+2. **等待构建完成**，记下向导给出的 `https://cfmc-edge.<你的子域>.workers.dev` 地址。
+
+验证：
+
+```bash
+curl https://cfmc-edge.<你的子域>.workers.dev/health
+# → {"status":"ok",...} 即部署成功
+```
+
+客户端 Mod 连接 `wss://cfmc-edge.<你的子域>.workers.dev/ws/game`；管理面板在 `https://<该地址>/admin`。
+
+> - **R2 与 Queue 默认未启用**（免费账号开箱即用，二者为预留绑定），启用见 3.5；
+> - 一键部署后续：克隆到你账号的仓库 push 即自动重新部署；改名/换域名/资源调参见第 3、6 章。
+
+### 2.2 方式 B：CLI 部署（五分钟版）
 
 已经熟悉 Cloudflare 生态的话，照抄即可；每一步的细节见第 3 节。
 
@@ -89,26 +116,21 @@ cd cfmc-server && npm install
 # 1. 登录 Cloudflare（弹出浏览器授权）
 npx wrangler login
 
-# 2. 初始化 D1：创建 2 个库 + 远端建表 + 自动回填 wrangler.toml 占位符
+# 2. 初始化 D1：创建 2 个库 + 自动回填 wrangler.toml 占位符 + 按迁移建表
 bash scripts/init-d1.sh
 
 # 3. 创建 KV 命名空间，把输出的 id 填入 wrangler.toml 的 <YOUR_KV_NAMESPACE_ID>
 npx wrangler kv namespace create CACHE
 
-# 4. 创建 R2 桶与队列（暂时不用备份/异步任务可跳过，见 3.5 的注释方案）
-npx wrangler r2 bucket create cfmc-backups
-npx wrangler queues create EVENTS_QUEUE
-
-# 5. 配置密钥（Secret 保存，不落盘、不进 git）
+# 4. 配置密钥（Secret 保存，不落盘、不进 git）
 openssl rand -hex 32 | npx wrangler secret put AUTH_JWT_SECRET
 openssl rand -hex 32 | npx wrangler secret put ADMIN_TOKEN      # 管理面板/管理 API 令牌
+npx wrangler secret put ALERT_WEBHOOK_URL                       # 可选，粘 webhook 地址
 
-# 6. 老部署需跑一次 schema 迁移（新增 bans/chat_history/coins/chunk_claims）
-npx wrangler d1 execute cfmc-users --remote --file=src/storage/migrations/002-phase3-p4.sql -y
-npx wrangler d1 execute cfmc-world --remote --file=src/storage/migrations/002-phase3-p4.sql -y
-npm run deploy
+# 5. 部署（R2/Queue 为可选预留绑定，默认未启用，见 3.5）
+npm run deploy   # 自动先应用 D1 迁移（已应用则跳过），再 wrangler deploy
 
-# 7. 验证（URL 换成上一步输出的 workers.dev 地址）
+# 6. 验证（URL 换成上一步输出的 workers.dev 地址）
 curl https://cfmc-edge.<你的子域>.workers.dev/health
 ```
 
@@ -162,7 +184,7 @@ bash scripts/init-d1.sh
 
 1. 创建 `cfmc-users`（账号/审计）与 `cfmc-world`（类 Cesium 地图存档）两个 D1 库；
 2. 从命令输出提取 `database_id`，**自动替换** `wrangler.toml` 里的两个占位符；
-3. 分别执行 `users-schema.sql`（3 张表）与 `cesium-schema.sql`（7 张表）完成远端建表。
+3. 按 wrangler 标准迁移建表：`wrangler d1 migrations apply USERS_DB/WORLD_DB`（迁移文件在 `src/storage/migrations/{users,world}/0001_init.sql`，全幂等，重复执行无副作用）。
 
 手动等效命令（想逐步执行时用）：
 
@@ -170,8 +192,8 @@ bash scripts/init-d1.sh
 npx wrangler d1 create cfmc-users          # 输出中的 database_id 记下
 npx wrangler d1 create cfmc-world
 # 编辑 wrangler.toml 替换两个 <YOUR_XXX_DB_ID> 后：
-npx wrangler d1 execute cfmc-users --remote --file=src/storage/users-schema.sql -y
-npx wrangler d1 execute cfmc-world --remote --file=src/storage/cesium-schema.sql -y
+npx wrangler d1 migrations apply USERS_DB --remote
+npx wrangler d1 migrations apply WORLD_DB --remote
 ```
 
 只想先本地跑通（无需 Cloudflare 账号）：
@@ -194,21 +216,25 @@ npx wrangler kv namespace create CACHE
 #   id = "abcd1234..."
 ```
 
-### 3.5 创建 R2 与 Queue
+### 3.5 R2 与 Queue（可选预留绑定，默认未启用）
+
+`wrangler.toml` 中 `[[r2_buckets]]`（备份归档）与 `[[queues]]`（异步任务削峰）**默认处于注释状态**——二者是预留能力，当前代码不会访问，不启用不影响任何功能；且 R2 需在 Dashboard 开通一次（免费，但账号需绑定支付方式）、Queue 需 Workers Paid 计划，默认关闭可让免费账号开箱即用（含一键部署）。
+
+需要启用时：
 
 ```bash
-# R2 (世界备份归档)。首次使用需在 Dashboard → R2 页面点一次开通(免费)
+# R2: Dashboard → R2 页面点一次开通(免费, 需绑定支付方式)，或直接:
 npx wrangler r2 bucket create cfmc-backups
 
-# Queue (异步任务: 统计上报/批量备份等, 把非实时任务从 Tick 循环剥离)
+# Queue: 需 Workers Paid 计划
 npx wrangler queues create EVENTS_QUEUE
 ```
 
-> **可跳过方案**：R2/Queue 在 Phase 2 属于预留能力。若暂时不想开通，把 `wrangler.toml` 中 `[[r2_buckets]]` 或 `[[queues]]` 对应段落注释掉即可部署——代码只在触发备份/上报路径时才访问这两个绑定。注意：`wrangler dev` 本地模拟对 producer-only Queue 配置较老版本可能报错，同样用注释方案绕过。
+然后取消 `wrangler.toml` 中对应段落的注释并重新部署即可。
 
 ### 3.6 核对 wrangler.toml
 
-部署前确认三个占位符都已替换：
+**一键部署用户跳过本节**（资源 ID 由平台自动供给并回写）。CLI 手动部署前确认三个占位符都已替换：
 
 | 占位符 | 来源 | 绑定 |
 |--------|------|------|
@@ -228,7 +254,7 @@ npx wrangler queues create EVENTS_QUEUE
 | `VIEW_DISTANCE` | `6` | 区块视距 |
 | `COMPRESSION_THRESHOLD` | `256` | 包体超过该字节数才压缩 |
 
-### 3.7 配置 Secrets（必须）
+### 3.7 配置 Secrets（必须；一键部署已在向导输入）
 
 | Secret | 必需 | 用途 |
 |--------|------|------|
@@ -244,6 +270,8 @@ npx wrangler secret put ALERT_WEBHOOK_URL   # 可选，粘 webhook 地址
 ```
 
 - Secret 与代码分离，`wrangler.toml` 里**永远不要**写真实密钥；
+- Secrets 清单模板见 [.dev.vars.example](.dev.vars.example)：一键部署向导据此逐项提示；本地开发复制为 `.dev.vars`（已被 .gitignore 忽略）后填值；
+- `AUTH_JWT_SECRET` 漏配时服务端会首次自动生成随机密钥存入 KV 并打警告（每次部署唯一、重启不失效，不再依赖公共 dev 密钥），但生产环境仍应显式配置以便轮换；
 - 多环境时 Secret 按环境隔离：`npx wrangler secret put AUTH_JWT_SECRET --env production`；
 - 轮换：重新执行 `secret put` 即可，已登录玩家下次请求 401 后需重新登录（客户端会自动跳转认证界面）。
 
@@ -369,19 +397,20 @@ npx wrangler d1 execute cfmc-users --remote --command "SELECT * FROM login_audit
 git pull origin main
 npm install          # devDependencies 可能更新 (wrangler 版本)
 npm test             # 先跑测试
-# schema 有变更时跑迁移 (幂等; 只加列/加表):
-npx wrangler d1 execute cfmc-users --remote --file=src/storage/migrations/002-phase3-p4.sql -y
-npx wrangler d1 execute cfmc-world --remote --file=src/storage/migrations/002-phase3-p4.sql -y
-npm run deploy       # 再部署
+npm run deploy       # 自动应用新增 D1 迁移 (幂等), 再部署
 ```
+
+> **从 Phase 2 时代的老库升级**（迁移机制引入前的部署，`player_data` 缺 `role`/`coins` 列）：迁移 0001 对已存在的表是 no-op，补列需手动执行一次增量脚本：
+> `npx wrangler d1 execute USERS_DB --remote --file=src/storage/migrations/002-phase3-p4.sql -y`
+> （SQLite 无 ADD COLUMN IF NOT EXISTS，重复执行报 duplicate column 属预期；缺列场景跑一次即可）。
 
 常规更新不涉及 DO 迁移与 schema 变更时，以上四条即可；涉及变更见 6.2。
 
 ### 6.2 Schema 变更流程
 
-1. 新增迁移 SQL 文件（如 `src/storage/migrations/002-xxx.sql`），**只加列/加表，不重命名不删除**（老数据无损）；
-2. 执行：`npx wrangler d1 execute cfmc-world --remote --file=src/storage/migrations/002-xxx.sql -y`；
-3. 同步更新基础 schema 文件，保证新部署环境一次建表到位。
+1. 新增迁移文件：`src/storage/migrations/users/0002-xxx.sql`（账号库）或 `src/storage/migrations/world/0002-xxx.sql`（世界库），**只加列/加表，不重命名不删除**（老数据无损）；
+2. 无需手动执行——下次 `npm run deploy`（含一键部署触发的自动构建）会按序号自动应用未跑过的迁移，并在 D1 的 `d1_migrations` 表中登记；
+3. 迁移语句保持幂等（IF NOT EXISTS），可安全重跑。
 
 ### 6.3 性能与成本调参
 
@@ -400,14 +429,14 @@ npm run deploy       # 再部署
 
 | 症状 | 可能原因 | 解决 |
 |------|----------|------|
-| `wrangler deploy` 报 D1 id 无效 | 占位符未替换 / id 抄错 | 核对 3.6 的三个占位符；`wrangler d1 list` 比对 |
-| 部署成功但 `/health` 500 | 绑定缺失（KV/R2/Queue 未创建却被 toml 引用） | `npm run tail` 看堆栈；缺什么按 3.4/3.5 补建，或注释对应段落 |
+| `wrangler deploy` 报 D1 id 无效 | 手动部署占位符未替换 / id 抄错 | 核对 3.6 的三个占位符；`wrangler d1 list` 比对（一键部署自动回写 id，不会出现） |
+| 部署成功但 `/health` 500 | 绑定缺失（KV 未创建却被 toml 引用 / 自行启用 R2/Queue 后未真正创建） | `npm run tail` 看堆栈；缺什么按 3.4/3.5 补建，或注释对应段落 |
 | WebSocket 握手返回 401 | Token 缺失/过期，或认证模式不匹配 | 检查客户端 `DEFAULT_AUTH_MODE`；`/auth/login` 重新换取 Token |
 | `wrangler login` 卡住 | 服务器/远程环境无浏览器 | 用 3.2 方式 B 的 API Token + 环境变量 |
-| 本地 `wrangler dev` 报 Queue 配置错误 | 本地模拟不支持 producer-only 配置 | 注释 `[[queues]]` 段，或升级 wrangler 到最新 |
+| 本地 `wrangler dev` 报 Queue 配置错误 | 自行启用了 Queue，但本地模拟不支持 producer-only 配置 | `[[queues]]` 默认已注释；若自行启用后遇到，注释掉即可 |
 | 游戏内 1101 / DO 重启频繁 | DO CPU 超限（单 Tick 计算过大） | 调大 `PERSIST_INTERVAL_MS`；检查是否有异常玩家刷包（tail 观察） |
 | 客户端提示"协议版本不支持" | 服务端 `version-registry.js` 缺该 MC 版本条目 | 在版本表加一行协议号（全协议支持机制的设计就是加一行） |
-| 聊天/方块正常但区块不加载 | WORLD_DB 未建表（跳过了 init-d1 的建表步骤） | 重跑 `bash scripts/init-d1.sh`（幂等） |
+| 聊天/方块正常但区块不加载 | WORLD_DB 未建表（跳过了迁移步骤） | `npm run db:migrate`（幂等），或重跑 `bash scripts/init-d1.sh` |
 | 请求全部 429 | 触发内存限流器（120 次/分/IP） | 属预期行为；如误伤可调 `src/index.js` 的 `maxRequests` |
 
 **通用排查路径**：`npm run tail` 复现问题 → 看首个 error 级日志的 `stack` → 对照上表处理。`/health` 的 `colo` 字段可确认命中的边缘节点，用于区分"单区域故障"与"全局故障"。
@@ -416,7 +445,7 @@ npm run deploy       # 再部署
 
 上线公开服之前逐项过一遍：
 
-- [ ] `AUTH_JWT_SECRET` 已用 `openssl rand -hex 32` 生成，且只存在 Secret 中；
+- [ ] `AUTH_JWT_SECRET` 已用 `openssl rand -hex 32` 生成，且只存在 Secret 中（一键部署用户：确认向导中输入的是强随机值而非留空）；
 - [ ] `DEFAULT_AUTH_MODE` 与运营策略一致（公开服建议 `online` 或 `hybrid`，纯 `offline` 有被盗号风险）；
 - [ ] Cloudflare 账号已开启两步验证；API Token 用最小权限模板且设了过期时间；
 - [ ] 评估限流参数（`src/index.js` 中 120 次/分/IP）是否匹配预期人数；
@@ -433,8 +462,8 @@ npm run deploy       # 再部署
 | `USERS_DB` | D1 | `cfmc-users` | `wrangler d1 create cfmc-users` | 账号/玩家数据/登录审计 |
 | `WORLD_DB` | D1 | `cfmc-world` | `wrangler d1 create cfmc-world` | 类 Cesium 地图存档（7 表） |
 | `CACHE` | KV | 命名空间 CACHE | `wrangler kv namespace create CACHE` | 会话/Refresh Token/皮肤缓存 |
-| `BACKUPS` | R2 | `cfmc-backups` | `wrangler r2 bucket create cfmc-backups` | 世界备份/大文件托管 |
-| `EVENTS_QUEUE` | Queue | `EVENTS_QUEUE` | `wrangler queues create EVENTS_QUEUE` | 异步任务削峰 |
+| `BACKUPS` | R2 | `cfmc-backups` | 默认未启用（wrangler.toml 已注释），启用见 3.5 | 世界备份/大文件托管（预留） |
+| `EVENTS_QUEUE` | Queue | `EVENTS_QUEUE` | 默认未启用（需 Paid 计划），启用见 3.5 | 异步任务削峰（预留） |
 | `WORLD_MANAGER` | DO | WorldManagerDO | 随代码部署 | 单例协调：路由表/在线状态 |
 | `REGION` | DO | RegionDO | 随代码部署 | 区域游戏引擎（20TPS Tick） |
 | `CHAT` | DO | ChatDO | 随代码部署 | 全服聊天 |
@@ -443,10 +472,12 @@ npm run deploy       # 再部署
 
 ```bash
 npm run dev                 # 本地开发 (miniflare 全模拟)
-npm run deploy              # 部署
+npm run deploy              # 自动应用 D1 迁移后部署
+npm run db:migrate          # 手动应用远端 D1 迁移 (幂等)
+npm run db:migrate:local    # 本地模拟库应用迁移
 npm run tail                # 实时日志
 npm test                    # 单元测试
-npm run init:d1             # D1 建库建表 + 回填 (远端)
+npm run init:d1             # D1 建库 + 回填 id + 应用迁移 (远端)
 npm run init:d1:local       # D1 本地模拟建表
 npx wrangler whoami         # 登录状态
 npx wrangler d1 list        # 列出 D1 库
