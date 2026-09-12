@@ -218,7 +218,7 @@ npx wrangler kv namespace create CACHE
 
 ### 3.5 R2 与 Queue（可选预留绑定，默认未启用）
 
-`wrangler.toml` 中 `[[r2_buckets]]`（备份归档）与 `[[queues]]`（异步任务削峰）**默认处于注释状态**——二者是预留能力，当前代码不会访问，不启用不影响任何功能；且 R2 需在 Dashboard 开通一次（免费，但账号需绑定支付方式）、Queue 需 Workers Paid 计划，默认关闭可让免费账号开箱即用（含一键部署）。
+`wrangler.toml` 中 `[[r2_buckets]]`（备份归档）与 `[[queues.producers]]`（异步任务削峰）**默认处于注释状态**——二者是预留能力，当前代码不会访问，不启用不影响任何功能；且 R2 需在 Dashboard 开通一次（免费，但账号需绑定支付方式）、Queue 需 Workers Paid 计划，默认关闭可让免费账号开箱即用（含一键部署）。
 
 需要启用时：
 
@@ -226,11 +226,17 @@ npx wrangler kv namespace create CACHE
 # R2: Dashboard → R2 页面点一次开通(免费, 需绑定支付方式)，或直接:
 npx wrangler r2 bucket create cfmc-backups
 
-# Queue: 需 Workers Paid 计划
-npx wrangler queues create EVENTS_QUEUE
+# Queue: 需 Workers Paid 计划 (注意: 队列名是 cfmc-events, 不是绑定名 EVENTS_QUEUE)
+npx wrangler queues create cfmc-events
 ```
 
 然后取消 `wrangler.toml` 中对应段落的注释并重新部署即可。
+
+> ⚠️ **Queue 段落不能简单去掉 `#`**：wrangler v4 里顶层 `queues` 必须是对象，
+> 生产者要写成 `[[queues.producers]]`（配置内已用正确语法预写好）。若手动改成
+> `[[queues]]` 会报错 `The field "queues" should be an object but got [...]`。
+> 另外若要加消费者 `[[queues.consumers]]`，需先在 `src/index.js` 导出
+> `async queue(batch, env, ctx)` handler，否则部署会被 API 拒绝。
 
 ### 3.6 核对 wrangler.toml
 
@@ -433,7 +439,8 @@ npm run deploy       # 自动应用新增 D1 迁移 (幂等), 再部署
 | 部署成功但 `/health` 500 | 绑定缺失（KV 未创建却被 toml 引用 / 自行启用 R2/Queue 后未真正创建） | `npm run tail` 看堆栈；缺什么按 3.4/3.5 补建，或注释对应段落 |
 | WebSocket 握手返回 401 | Token 缺失/过期，或认证模式不匹配 | 检查客户端 `DEFAULT_AUTH_MODE`；`/auth/login` 重新换取 Token |
 | `wrangler login` 卡住 | 服务器/远程环境无浏览器 | 用 3.2 方式 B 的 API Token + 环境变量 |
-| 本地 `wrangler dev` 报 Queue 配置错误 | 自行启用了 Queue，但本地模拟不支持 producer-only 配置 | `[[queues]]` 默认已注释；若自行启用后遇到，注释掉即可 |
+| 本地 `wrangler dev` 报 Queue 配置错误 | 自行启用了 Queue，但本地模拟不支持 producer-only 配置 | `[[queues.producers]]` 默认已注释；若自行启用后遇到，注释掉即可 |
+| 部署报 `The field "queues" should be an object` | Queue 段被写成顶层 `[[queues]]` 数组（v4 非法形态，常见于取消注释时手滑） | 改回 `[[queues.producers]]` + `binding`/`queue` 两行（见 wrangler.toml 预写模板） |
 | 游戏内 1101 / DO 重启频繁 | DO CPU 超限（单 Tick 计算过大） | 调大 `PERSIST_INTERVAL_MS`；检查是否有异常玩家刷包（tail 观察） |
 | 客户端提示"协议版本不支持" | 服务端 `version-registry.js` 缺该 MC 版本条目 | 在版本表加一行协议号（全协议支持机制的设计就是加一行） |
 | 聊天/方块正常但区块不加载 | WORLD_DB 未建表（跳过了迁移步骤） | `npm run db:migrate`（幂等），或重跑 `bash scripts/init-d1.sh` |

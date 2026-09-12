@@ -98,12 +98,20 @@ id = "<YOUR_KV_NAMESPACE_ID>"           # 一键部署自动供给; 手动部署
 # ------------------------------------------------------------
 # 用途: 削峰 —— 把非实时任务 (统计上报/Discord桥接/批量备份) 从
 #       Tick 循环剥离, 避免 DO CPU 超时
-# 启用步骤: 升级 Workers Paid → 取消下面注释 → 重新部署
+# ⚠️ wrangler v4 语法: 顶层 queues 必须是对象 —— 生产者写 [[queues.producers]],
+#    消费者写 [[queues.consumers]]。直接写 [[queues]] 取消注释会报错:
+#    'The field "queues" should be an object but got [...]'
+# ⚠️ 绑定名 ≠ 队列名: binding 是代码里 env.XXX 引用的名字, queue 是
+#    wrangler queues create 创建的真实队列名 (建议 cfmc-events)
+# 启用步骤: 升级 Workers Paid → `npx wrangler queues create cfmc-events`
+#           → 取消下面注释 → 重新部署
+# 说明: 当前代码尚未引用 env.EVENTS_QUEUE (预留绑定), 纯生产者绑定可
+#    安全启用; 若还需配消费者 [[queues.consumers]], 必须先在 src/index.js
+#    导出 async queue(batch, env, ctx) handler, 否则部署会被 API 拒绝
 # ============================================================
-# [[queues]]
-# queue = "EVENTS_QUEUE"
-# max_batch_size = 100
-# max_batch_timeout = 30
+# [[queues.producers]]
+# binding = "EVENTS_QUEUE"
+# queue = "cfmc-events"
 
 # ============================================================
 # 环境变量 (与 [vars] 同名, RegionDO/Auth Worker 内通过 env.XXX 读取)
