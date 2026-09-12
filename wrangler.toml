@@ -16,7 +16,7 @@
 #     绑定), 注释掉不影响任何功能; 需要时取消注释并重新部署 (见 DEPLOYMENT.md 3.5)
 # ============================================================
 
-name = "cfmc-edge"
+name = "cfmc-server"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
@@ -65,13 +65,13 @@ new_sqlite_classes = ["WorldManagerDO", "RegionDO", "ChatDO"]
 [[d1_databases]]
 binding = "USERS_DB"
 database_name = "cfmc-users"
-database_id = "<YOUR_USERS_DB_ID>"      # 一键部署自动供给; 手动部署由 init-d1.sh 回填
+database_id = "339ddaec-1859-484d-ba5b-2610295aff8d"      # 一键部署自动供给; 手动部署由 init-d1.sh 回填
 migrations_dir = "src/storage/migrations/users"
 
 [[d1_databases]]
 binding = "WORLD_DB"
 database_name = "cfmc-world"
-database_id = "<YOUR_WORLD_DB_ID>"      # 同上
+database_id = "959c2a50-6f19-47ff-bc14-f4a0ee111780"      # 同上
 migrations_dir = "src/storage/migrations/world"
 
 # ============================================================
@@ -80,7 +80,7 @@ migrations_dir = "src/storage/migrations/world"
 # ============================================================
 [[kv_namespaces]]
 binding = "CACHE"
-id = "<YOUR_KV_NAMESPACE_ID>"           # 一键部署自动供给; 手动部署: wrangler kv namespace create CACHE 后替换
+id = "3b2101056fdf43f9ba8ede3dc5d92fc5"           # 一键部署自动供给; 手动部署: wrangler kv namespace create CACHE 后替换
 
 # ============================================================
 # R2 存储桶 (S3 兼容对象存储) — 可选, 默认关闭
@@ -89,9 +89,10 @@ id = "<YOUR_KV_NAMESPACE_ID>"           # 一键部署自动供给; 手动部署
 # 启用步骤: Dashboard → R2 页面开通 (免费, 需绑定支付方式) →
 #           取消下面注释 → 重新部署 (或 `npx wrangler r2 bucket create cfmc-backups` 手动建桶)
 # ============================================================
-# [[r2_buckets]]
-# binding = "BACKUPS"
-# bucket_name = "cfmc-backups"
+[[r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "cfmc-backups"
+
 
 # ============================================================
 # Queue (异步任务队列) — 可选, 默认关闭 (需 Workers Paid 计划)
@@ -109,16 +110,16 @@ id = "<YOUR_KV_NAMESPACE_ID>"           # 一键部署自动供给; 手动部署
 #    安全启用; 若还需配消费者 [[queues.consumers]], 必须先在 src/index.js
 #    导出 async queue(batch, env, ctx) handler, 否则部署会被 API 拒绝
 # ============================================================
-# [[queues.producers]]
-# binding = "EVENTS_QUEUE"
-# queue = "cfmc-events"
+[[queues.producers]]
+binding = "EVENTS_QUEUE"
+queue = "cfmc-events"
 
 # ============================================================
 # 环境变量 (与 [vars] 同名, RegionDO/Auth Worker 内通过 env.XXX 读取)
 # ============================================================
 [vars]
 ENVIRONMENT = "development"
-DEFAULT_AUTH_MODE = "hybrid"            # online / offline / skin_server / hybrid
+DEFAULT_AUTH_MODE = "offline"            # online / offline / skin_server / hybrid
 DEFAULT_SKIN_SERVER = "https://ely.by"  # 或 https://littleskin.cn 或自建地址
 MAX_PLAYERS_PER_REGION = "25"
 TICK_RATE_MS = "50"                     # 20 TPS
@@ -126,7 +127,7 @@ PERSIST_INTERVAL_MS = "5000"            # 5秒持久化一次
 VIEW_DISTANCE = "6"                     # 区块视距
 COMPRESSION_THRESHOLD = "256"           # 超过此大小的包才压缩
 # ---- Phase 3/4 ----
-ADMIN_ORIGIN = ""                       # 管理面板域名 (CORS 收敛; 空 = 开发期 *)
+ADMIN_ORIGIN = "*"                       # 管理面板域名 (CORS 收敛; 空 = 开发期 *)
 RECONNECT_GRACE_MS = "60000"            # 断线重连宽限 (期内恢复原状态)
 MAX_ENTITIES_PER_REGION = "12"          # 单区域实体上限 (怪物 AI)
 CHAT_RATE_LIMIT = "5"                   # 聊天限流: 条数/窗口
