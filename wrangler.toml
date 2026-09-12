@@ -22,9 +22,11 @@ compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 # HTML 文本导入规则: index.js `import panelHtml from './admin/panel.html'`
+# fallthrough = true: 命中 *.html 后继续走 wrangler 默认 Text 规则 (*.txt/*.sql), 消除 no-fallback 警告
 [[rules]]
 type = "Text"
 globs = ["**/*.html"]
+fallthrough = true
 
 # ============================================================
 # Durable Objects 类定义
@@ -139,7 +141,7 @@ mode = "smart"
 # 本地开发配置
 # ============================================================
 [dev]
-local_port = 8787
+port = 8787
 
 # ------------------------------------------------------------
 # 环境差异配置 (部署生产环境: wrangler deploy --env production)

@@ -30,7 +30,8 @@
 import { CLIENTBOUND, SERVERBOUND, PACKET_FLAGS, PROTOCOL_VERSION } from '../protocol/packet-definitions.js';
 import { decideHandshake, supportSummary } from '../protocol/version-registry.js';
 import { selectAdapter } from '../protocol/version-adapters.js';
-import { PacketReader, PacketWriter } from '../protocol/packet-writer.js';
+import { PacketWriter } from '../protocol/packet-writer.js';
+import { PacketReader } from '../protocol/packet-reader.js';
 import { decompress } from '../protocol/compression.js';
 import { loadChunk, decodeBlockIndices } from '../storage/cesium-reader.js';
 import {
