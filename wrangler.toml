@@ -119,7 +119,7 @@ queue = "cfmc-events"
 # ============================================================
 [vars]
 ENVIRONMENT = "development"
-DEFAULT_AUTH_MODE = "hybrid"            # online / offline / skin_server / hybrid
+DEFAULT_AUTH_MODE = "offline"            # online / offline / skin_server / hybrid
 DEFAULT_SKIN_SERVER = "https://ely.by"  # 或 https://littleskin.cn 或自建地址
 MAX_PLAYERS_PER_REGION = "25"
 TICK_RATE_MS = "50"                     # 20 TPS
