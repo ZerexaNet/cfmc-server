@@ -16,7 +16,7 @@
 #     绑定), 注释掉不影响任何功能; 需要时取消注释并重新部署 (见 DEPLOYMENT.md 3.5)
 # ============================================================
 
-name = "cfmc-edge"
+name = "cfmc-server"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
