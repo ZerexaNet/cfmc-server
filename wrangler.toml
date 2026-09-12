@@ -65,13 +65,13 @@ new_sqlite_classes = ["WorldManagerDO", "RegionDO", "ChatDO"]
 [[d1_databases]]
 binding = "USERS_DB"
 database_name = "cfmc-users"
-database_id = "<YOUR_USERS_DB_ID>"      # 一键部署自动供给; 手动部署由 init-d1.sh 回填
+database_id = "339ddaec-1859-484d-ba5b-2610295aff8d"      # 一键部署自动供给; 手动部署由 init-d1.sh 回填
 migrations_dir = "src/storage/migrations/users"
 
 [[d1_databases]]
 binding = "WORLD_DB"
 database_name = "cfmc-world"
-database_id = "<YOUR_WORLD_DB_ID>"      # 同上
+database_id = "959c2a50-6f19-47ff-bc14-f4a0ee111780"      # 同上
 migrations_dir = "src/storage/migrations/world"
 
 # ============================================================
@@ -80,7 +80,7 @@ migrations_dir = "src/storage/migrations/world"
 # ============================================================
 [[kv_namespaces]]
 binding = "CACHE"
-id = "<YOUR_KV_NAMESPACE_ID>"           # 一键部署自动供给; 手动部署: wrangler kv namespace create CACHE 后替换
+id = "3b2101056fdf43f9ba8ede3dc5d92fc5"           # 一键部署自动供给; 手动部署: wrangler kv namespace create CACHE 后替换
 
 # ============================================================
 # R2 存储桶 (S3 兼容对象存储) — 可选, 默认关闭
@@ -89,9 +89,9 @@ id = "<YOUR_KV_NAMESPACE_ID>"           # 一键部署自动供给; 手动部署
 # 启用步骤: Dashboard → R2 页面开通 (免费, 需绑定支付方式) →
 #           取消下面注释 → 重新部署 (或 `npx wrangler r2 bucket create cfmc-backups` 手动建桶)
 # ============================================================
-# [[r2_buckets]]
-# binding = "BACKUPS"
-# bucket_name = "cfmc-backups"
+[[r2_buckets]]
+binding = "BACKUPS"
+bucket_name = "cfmc-backups"
 
 # ============================================================
 # Queue (异步任务队列) — 可选, 默认关闭 (需 Workers Paid 计划)
@@ -100,10 +100,10 @@ id = "<YOUR_KV_NAMESPACE_ID>"           # 一键部署自动供给; 手动部署
 #       Tick 循环剥离, 避免 DO CPU 超时
 # 启用步骤: 升级 Workers Paid → 取消下面注释 → 重新部署
 # ============================================================
-# [[queues]]
-# queue = "EVENTS_QUEUE"
-# max_batch_size = 100
-# max_batch_timeout = 30
+[[queues]]
+queue = "EVENTS_QUEUE"
+max_batch_size = 100
+max_batch_timeout = 30
 
 # ============================================================
 # 环境变量 (与 [vars] 同名, RegionDO/Auth Worker 内通过 env.XXX 读取)
@@ -118,7 +118,7 @@ PERSIST_INTERVAL_MS = "5000"            # 5秒持久化一次
 VIEW_DISTANCE = "6"                     # 区块视距
 COMPRESSION_THRESHOLD = "256"           # 超过此大小的包才压缩
 # ---- Phase 3/4 ----
-ADMIN_ORIGIN = ""                       # 管理面板域名 (CORS 收敛; 空 = 开发期 *)
+ADMIN_ORIGIN = "*"                       # 管理面板域名 (CORS 收敛; 空 = 开发期 *)
 RECONNECT_GRACE_MS = "60000"            # 断线重连宽限 (期内恢复原状态)
 MAX_ENTITIES_PER_REGION = "12"          # 单区域实体上限 (怪物 AI)
 CHAT_RATE_LIMIT = "5"                   # 聊天限流: 条数/窗口
