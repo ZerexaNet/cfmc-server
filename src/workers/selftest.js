@@ -72,10 +72,17 @@ export async function handleSelfTest(request, env) {
         .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
         .all();
       const tables = new Set((results ?? []).map((r) => r.name));
-      const need = ['world_meta', 'chunks', 'chunk_sections', 'block_change_log', 'chunk_claims'];
+      // 必须核对 0001_init.sql 的全部 8 张表, 一张都不能少:
+      // 典型事故 — 库里只有部分表但缺 tile_entities 时, loadChunk 对每个已存在
+      // 区块的 TileEntity 查询都会抛错, 部署自检却报"就绪", 运行时才发现。
+      // (entities/scheduled_ticks 同理: 半截迁移必须在这里暴露, 而不是上线后)
+      const need = [
+        'world_meta', 'chunks', 'chunk_sections', 'tile_entities',
+        'entities', 'block_change_log', 'scheduled_ticks', 'chunk_claims',
+      ];
       const absent = need.filter((n) => !tables.has(n));
       if (absent.length > 0) throw new Error(`缺表: ${absent.join(', ')}`);
-      return `5 张关键表齐全 (${need.join(', ')})`;
+      return `8 张表齐全 (${need.join(', ')})`;
     });
 
     /* ---------- 4. KV CACHE 读写 ---------- */
